@@ -1,0 +1,151 @@
+{
+    "platform_mapping": {
+        "PC": "Windows",
+        "PS1": "PlayStation",
+        "PS2": "PlayStation 2",
+        "PS3": "PlayStation 3",
+        "PS4": "PlayStation 4",
+        "PSP": "PSP",
+        "Switch": "Nintendo Switch",
+        "Wii": "Wii",
+        "DS": "Nintendo DS",
+        "3DS": "Nintendo 3DS",
+        "GB": "Game Boy",
+        "GC": "GameCube"
+    },
+    "formats": [
+        "CD",
+        "DVD", 
+        "Small Box", 
+        "Big Box", 
+        "Sleeve", 
+        "Floppy", 
+        "Cartridge", 
+        "Digital"
+    ],
+    "conditions": [
+        "Sealed", 
+        "Mint", 
+        "Near Mint", 
+        "Minor Scratches", 
+        "Moderate Scratches", 
+        "Heavy Scratches", 
+        "Extreme Scratches", 
+        "Missing Disc", 
+        "N/A"
+    ],
+    "case_conditions": [
+        "OK", 
+        "Cracked", 
+        "Broken"
+    ],
+    "contents": [
+        "CIB", 
+        "No Manual", 
+        "No Sleeve", 
+        "No Case", 
+        "Sleeve Only", 
+        "Manual Only", 
+        "Case Only", 
+        "Loose Disc", 
+        "Nothing"
+    ],
+    "editions": [
+        "Standard", 
+        "Re-Release", 
+        "Platinum", 
+        "Compilation", 
+        "Bundle", 
+        "Special", 
+        "Collector", 
+        "GOTY"
+    ],
+    "dropped_columns": {
+        "NOT_PC": ["DX", "DOS", "3.1", "95", "98", "ME", "2000", "XP", "Vista", "Win7", "Win8", "Win10", "Copy Protection", "Spawnable", "Force Feedback"]
+    },
+    "toggles": {
+        "suffix_the": true,
+        "use_xls": false,
+        "use_xls_collate_sheets": false,
+        "use_clipboard": true,
+        "use_full_platform_name": false
+    },
+    "column_order": [
+        "Title",   
+        "Release Date",    
+        "Platform", 
+        "Case", 
+        "Sleeve", 
+        "Manual", 
+        "Condition", 
+        "Format", 
+        "Edition", 
+        "Developer", 
+        "Payed", 
+        "DOS", 
+        "3.1", 
+        "95", 
+        "98", 
+        "ME", 
+        "2000", 
+        "XP", 
+        "Vista", 
+        "Win7", 
+        "Win10", 
+        "DX", 
+        "Ripped", 
+        "Copy Protection", 
+        "Playable", 
+        "Spawnable", 
+        "Force Feedback", 
+        "Dimension", 
+        "Time", 
+        "Perspective", 
+        "Setting", 
+        "Genre", 
+        "Gameplay"],
+    "platform_defaults": {
+        "PS1": {
+            "selected_format_index": 0,
+            "selected_condition_index": 4,
+            "selected_content_index": 0,
+            "selected_editions_index": 0
+        },
+        "Switch": {
+            "selected_format_index": 6,
+            "selected_condition_index": 8,
+            "selected_content_index": 1,
+            "selected_editions_index": 0
+        },
+        "DS": {
+            "selected_format_index": 6,
+            "selected_condition_index": 8,
+            "selected_content_index": 0,
+            "selected_editions_index": 0
+        },
+        "3DS": {
+            "selected_format_index": 6,
+            "selected_condition_index": 8,
+            "selected_content_index": 0,
+            "selected_editions_index": 0
+        },
+        "GB": {
+            "selected_format_index": 6,
+            "selected_condition_index": 8,
+            "selected_content_index": 7,
+            "selected_editions_index": 0
+        },
+        "PSP": {
+            "selected_format_index": 6,
+            "selected_condition_index": 1,
+            "selected_content_index": 0,
+            "selected_editions_index": 0
+        },
+        "Default": {
+            "selected_format_index": 1,
+            "selected_condition_index": 3,
+            "selected_content_index": 0,
+            "selected_editions_index": 0
+        }
+    }
+}
