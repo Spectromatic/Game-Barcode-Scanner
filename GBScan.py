@@ -10,6 +10,8 @@ import time
 import json
 import pyperclip
 
+VERSION = "1.0.0"
+
 logging.basicConfig(filename='debug.log', level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Load settings
@@ -143,7 +145,7 @@ def draw_menu(stdscr):
     if screen_columns < 30 or screen_rows < 10:  # Adjust these values as needed
         stdscr.addstr(0, 0, "Error: Console window too small", curses.A_BOLD)
     else:
-        right_align_text(stdscr, "\u2524 Game Barcode Scanner \u251c", 0)
+        right_align_text(stdscr, f"\u2524 Game Barcode Scanner {VERSION} \u251c", 0)
 
 
     #Draw Platform string
