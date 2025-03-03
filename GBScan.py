@@ -518,9 +518,9 @@ def write_to_file(data, platform):
 
     file_name = f"{platform}_scanned_collection.csv"
     file_exists = os.path.isfile(file_name)
-    xls_format = settings.get('use_xls', False)
-    xls_collate = settings.get('use_xls_collate_sheets', False)
-    clipboard = settings.get('use_clipboard', True)
+    xls_format = settings['toggles'].get('use_xls', False)
+    xls_collate = settings['toggles'].get('use_xls_collate_sheets', False)
+    clipboard = settings['toggles'].get('use_clipboard', True)
 
     # Toggle whether to write xls to a single file with tabs or separate files
     if xls_format:
@@ -597,7 +597,8 @@ def main(stdscr):
         def update_game_data():
             global game_data
             if game_data:
-                game_data['platform'] = platforms[selected_platform_index] if settings.get('use_full_platform_name', False) else platform_mapping[platforms[selected_platform_index]]
+                #game_data['platform'] = platforms[selected_platform_index] if settings.get('use_full_platform_name', False) else platform_mapping[platforms[selected_platform_index]]
+                game_data['platform'] = platform_mapping[platforms[selected_platform_index]] if settings['toggles'].get('use_full_platform_name', False) else platforms[selected_platform_index]
                 game_data['format'] = formats[selected_format_index]
                 game_data['condition'] = conditions[selected_condition_index]
                 game_data['content'] = contents[selected_content_index]
@@ -670,7 +671,8 @@ def main(stdscr):
                 
 
                 #game_data['platform'] = platforms[selected_platform_index]
-                game_data['platform'] = platforms[selected_platform_index] if settings.get('use_full_platform_name', False) else platform_mapping[platforms[selected_platform_index]]
+                #game_data['platform'] = platforms[selected_platform_index] if settings.get('use_full_platform_name', False) else platform_mapping[platforms[selected_platform_index]]
+                game_data['platform'] = platform_mapping[platforms[selected_platform_index]] if settings['toggles'].get('use_full_platform_name', False) else platforms[selected_platform_index]
                 game_data['format'] = formats[selected_format_index]
                 game_data['condition'] = conditions[selected_condition_index]
                 game_data['content'] = contents[selected_content_index]
@@ -702,7 +704,7 @@ def main(stdscr):
             data = {
                     "Title": [chosen_title],
                     "Release Date": [game_data.get('release_date')] if game_data.get('release_date') else "",
-                    "Platform": platforms[selected_platform_index] if settings.get('use_full_platform_name', False) else platform_mapping[platforms[selected_platform_index]],
+                    "Platform": platform_mapping[platforms[selected_platform_index]] if settings['toggles'].get('use_full_platform_name', False) else platforms[selected_platform_index],
                     "Case": [case],
                     "Sleeve": [sleeve],
                     "Manual": [manual],
