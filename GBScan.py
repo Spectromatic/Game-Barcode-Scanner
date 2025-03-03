@@ -546,7 +546,7 @@ def write_to_file(data, platform):
             clipboard_data = data.to_excel(index=False)
     else:
         data.to_csv(file_name, mode='a', sep='\t', index=False, header=not file_exists)
-        clipboard_data = data.to_csv(sep='\t', index=False)
+        clipboard_data = data.to_csv(sep='\t', index=False, header=False)
     if clipboard:
         pyperclip.copy(clipboard_data)
 
