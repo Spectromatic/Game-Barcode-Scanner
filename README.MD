@@ -10,6 +10,7 @@ Was mainly meant to work with a barcode scanner, but in case nothing is found, a
 - Pandas
 - Beautiful Soup
 - Requests
+- Openpyxl
 - Pyperclip
 
 # How to run
@@ -20,6 +21,5 @@ Run the following command in your terminal:
 
 # TODO
 
-- Make script function in smaller windows
-- Cleanup code
-- Comment code
+- [ ] Make it less janky
+- [ ] Add a setup tab to tweak settings file
