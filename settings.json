@@ -13,6 +13,20 @@
         "GB": "Game Boy",
         "GC": "GameCube"
     },
+    "platforms": [
+        "PC", 
+        "PS1", 
+        "PS2", 
+        "PS3", 
+        "PS4", 
+        "PSP", 
+        "Switch", 
+        "Wii", 
+        "DS", 
+        "3DS", 
+        "GB", 
+        "GC"
+    ],
     "formats": [
         "CD",
         "DVD", 
@@ -60,16 +74,6 @@
         "Collector", 
         "GOTY"
     ],
-    "dropped_columns": {
-        "NOT_PC": ["DX", "DOS", "3.1", "95", "98", "ME", "2000", "XP", "Vista", "Win7", "Win8", "Win10", "Copy Protection", "Spawnable", "Force Feedback"]
-    },
-    "toggles": {
-        "suffix_the": true,
-        "use_xls": false,
-        "use_xls_collate_sheets": false,
-        "use_clipboard": true,
-        "use_full_platform_name": false
-    },
     "column_order": [
         "Title",   
         "Release Date",    
@@ -104,48 +108,71 @@
         "Setting", 
         "Genre", 
         "Gameplay"],
+    "columns_to_drop": {
+        "NOT_PC": ["DX", "DOS", "3.1", "95", "98", "ME", "2000", "XP", "Vista", "Win7", "Win8", "Win10", "Copy Protection", "Spawnable", "Force Feedback"]
+    },
     "platform_defaults": {
         "PS1": {
-            "selected_format_index": 0,
-            "selected_condition_index": 4,
-            "selected_content_index": 0,
-            "selected_editions_index": 0
+            "formats": 0,
+            "conditions": 4,
+            "contents": 0,
+            "editions": 0
         },
         "Switch": {
-            "selected_format_index": 6,
-            "selected_condition_index": 8,
-            "selected_content_index": 1,
-            "selected_editions_index": 0
+            "formats": 6,
+            "conditions": 8,
+            "contents": 1,
+            "editions": 0
         },
         "DS": {
-            "selected_format_index": 6,
-            "selected_condition_index": 8,
-            "selected_content_index": 0,
-            "selected_editions_index": 0
+            "formats": 6,
+            "conditions": 8,
+            "contents": 0,
+            "editions": 0
         },
         "3DS": {
-            "selected_format_index": 6,
-            "selected_condition_index": 8,
-            "selected_content_index": 0,
-            "selected_editions_index": 0
+            "formats": 6,
+            "conditions": 8,
+            "contents": 0,
+            "editions": 0
         },
         "GB": {
-            "selected_format_index": 6,
-            "selected_condition_index": 8,
-            "selected_content_index": 7,
-            "selected_editions_index": 0
+            "formats": 6,
+            "conditions": 8,
+            "contents": 7,
+            "editions": 0
         },
         "PSP": {
-            "selected_format_index": 6,
-            "selected_condition_index": 1,
-            "selected_content_index": 0,
-            "selected_editions_index": 0
+            "formats": 6,
+            "conditions": 1,
+            "contents": 0,
+            "editions": 0
         },
         "Default": {
-            "selected_format_index": 1,
-            "selected_condition_index": 3,
-            "selected_content_index": 0,
-            "selected_editions_index": 0
+            "formats": 1,
+            "conditions": 3,
+            "contents": 0,
+            "editions": 0
         }
+    },
+    "scraped_data": {
+        "title": [],
+        "release_date": 1900,
+        "developer": ""
+    },
+    "scraped_taxonomy": {
+        "perspective": [],
+        "pacing": "",
+        "genre": "",
+        "setting": "",
+        "gameplay": "",
+        "moby_score": 0.0
+    },
+    "toggles": {
+        "use_the_suffix": true,
+        "use_xls": true,
+        "use_xls_collate_sheets": true,
+        "use_clipboard": true,
+        "use_full_platform_name": false
     }
 }

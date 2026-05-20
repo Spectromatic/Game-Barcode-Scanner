@@ -1,515 +1,608 @@
-import requests
-from bs4 import BeautifulSoup
-import re
-import pandas as pd
-import curses
-from curses.textpad import Textbox, rectangle
-import logging
-import os
-import time
 import json
+import os
 import pyperclip
+import re
+import requests
+import bs4 as bs
+import pandas as pd
+import tkinter as tk
+from openpyxl import load_workbook
+from openpyxl.utils.dataframe import dataframe_to_rows
+from tkinter import ttk
+from tkinter import messagebox
 
-VERSION = "1.0.0"
+active_game_data = {}
+active_perspective = None
+active_physical_data = {}
+active_settings = None
+active_selections = {}
+active_specs = {}
+active_taxonomy = {}
+active_title = None
+frames = []
+frames_padded = []
+infoframe = None
+searchframe = None
+logframe = None
+logtree = None
 
-logging.basicConfig(filename='debug.log', level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
-
-# Load settings
-with open('settings.json', 'r') as f:
-    settings = json.load(f)
-
-databases = ["Mobygames", "Pricecharting"]
-database_index = 0
-
-# Extract platforms from platform_mapping keys
-platform_mapping = settings.get("platform_mapping", {})
-platforms = list(platform_mapping.keys())
-
-formats = settings.get("formats", ["NO", "FORMATS", "SPECIFIED"])
-conditions = settings.get("conditions", ["NO", "CONDITIONS", "SPECIFIED"])
-case_conditions = settings.get("case_conditions", ["NO", "CASE CONDITIONS", "SPECIFIED"])
-contents = settings.get("contents", ["NO", "CONTENTS", "SPECIFIED"])
-editions = settings.get("editions", ["NO", "EDITIONS", "SPECIFIED"])
-
-selected_platform_index = 0
-selected_format_index = 0
-selected_condition_index = 0
-selected_case_condition_index = 0
-selected_content_index = 0
-selected_editions_index = 0
-selected_title_index = 0
-selected_perspective_index = 0
-
-platform_mapping = settings.get("platform_mapping", {})
-if not platform_mapping:
-    logging.warning("No platform mappings found in settings.json")
-
-for platform in platforms:
-    if platform not in platform_mapping:
-        logging.warning(f"Missing platform mapping for: {platform}")
-
-global message
-message = "Please scan a barcode or press 'ESC' to exit."
-global default_message
-default_message = message
-global message_success_str
-message_success_str = " added successfully. Please scan another barcode."
-global message_fail_str
-message_fail_str = " discarded. Please scan another barcode."
-global message_correct_game
-message_correct_game = "Is this the correct game? (Y/N or F7 to switch titles, F8 to switch perspectives)"
-global message_start
-message_start = "Please scan a barcode or press 'ESC' to exit."
-global message_no_game
-message_no_game = "Game not found. Please scan another barcode."
-
-global barcode
-barcode = ""
-global game_url
-game_url = None
-global game_data
-game_data = None
-global chosen_title
-chosen_title = None
-global titles
-titles = None
-
-
-def center_text(stdscr, text, y):
-    screen_columns = curses.COLS
-    center_x = screen_columns // 2
-    stdscr.addstr(y, center_x - len(text) // 2, text)
-
-def right_align_text(stdscr, text, y):
-    screen_rows, screen_columns = stdscr.getmaxyx()
-    if len(text) > screen_columns:
-        stdscr.addstr(y, 0, "Error: Console window too small", curses.A_BOLD)
-    else:
-        stdscr.addstr(y, screen_columns - len(text), text)
-
-def draw_line(stdscr, y):
-    screen_columns = curses.COLS
-    stdscr.addstr(y, 0, "\u2500" * screen_columns)
-
-#TODO Make possible to right-align
-def draw_menu_line(stdscr, y, header_str, color_header, color_selected, color_unselected, index, items):
-    menu_separator = " | "
-    bookend_str = " "
-    header_str = bookend_str + header_str + bookend_str
-    stdscr.addstr(y, 0, header_str, color_header | curses.A_UNDERLINE | curses.A_BOLD)
-    # Display items
-    item_line = bookend_str + menu_separator.join(items) + bookend_str
-    stdscr.addstr(y, len(header_str), item_line, curses.A_DIM | curses.A_UNDERLINE | color_unselected)
-    # Underline the selected item
-    start_pos = len(header_str) + len(bookend_str) + sum(len(item) + len(menu_separator) for item in items[:index])
-    stdscr.addstr(y, start_pos, items[index], color_selected | curses.A_UNDERLINE | curses.A_BOLD)
-
-def draw_menu(stdscr):
-    platform_str = " PLATFORM (F1) "
-    format_str = " FORMAT (F2) "
-    condition_str = " CONDITION (F3) "
-    content_str = " CONTENT (F4) "
-    edition_str = " EDITION (F5) "
-    database_str = " DATABASE (F6) "
+def game_accept():
+    if active_settings is None:
+        handle_error("No settings available.")
+        return
     
-    curses.init_pair(1, curses.COLOR_BLACK, curses.COLOR_CYAN)
-    curses.init_pair(2, curses.COLOR_WHITE, curses.COLOR_CYAN)
-    curses.init_pair(3, curses.COLOR_BLACK, curses.COLOR_YELLOW)
-    curses.init_pair(4, curses.COLOR_WHITE, curses.COLOR_YELLOW)
-    curses.init_pair(5, curses.COLOR_CYAN, curses.COLOR_WHITE)
-    curses.init_pair(6, curses.COLOR_BLACK, curses.COLOR_MAGENTA)
-    curses.init_pair(7, curses.COLOR_MAGENTA, curses.COLOR_WHITE)
-    curses.init_pair(8, curses.COLOR_BLACK, curses.COLOR_GREEN)
-    curses.init_pair(9, curses.COLOR_GREEN, curses.COLOR_WHITE)
-
-    PLATFORM_UNSELECTED = curses.color_pair(1)
-    PLATFORM_SELECTED = curses.color_pair(2)
-    FORMAT_UNSELECTED = curses.color_pair(3)
-    FORMAT_SELECTED = curses.color_pair(4)
-    HEADER = curses.color_pair(5)
-    CONDITION_UNSELECTED = curses.color_pair(6)
-    CONDITION_SELECTED = curses.color_pair(7)
-    CONTENT_UNSELECTED = curses.color_pair(8)
-    CONTENT_SELECTED = curses.color_pair(9)
-    #Platform Menu Placement
-    pmenu_y = 0
-    fmenu_y = 1
-    cmenu_y = 2
-    comenu_y = 3
-    emenu_y = 4
-    dmenu_y = 5
-
-    stdscr.clear()
+    if active_game_data is None:
+        handle_error("No game data available.")
+        return
     
-    screen_rows, screen_columns = stdscr.getmaxyx()
-    if screen_columns < 30 or screen_rows < 10:  # Adjust these values as needed
-        stdscr.addstr(0, 0, "Error: Console window too small", curses.A_BOLD)
-    else:
-        right_align_text(stdscr, f"\u2524 Game Barcode Scanner {VERSION} \u251c", 0)
-
-
-    #Draw Platform string
-    draw_menu_line(stdscr, pmenu_y, platform_str, HEADER, PLATFORM_SELECTED, PLATFORM_UNSELECTED, selected_platform_index, platforms)
-
-    #Format string
-    draw_menu_line(stdscr, fmenu_y, format_str, HEADER, FORMAT_SELECTED, FORMAT_UNSELECTED, selected_format_index, formats)
-
-    #Condition string
-    draw_menu_line(stdscr, cmenu_y, condition_str, HEADER, PLATFORM_SELECTED, PLATFORM_UNSELECTED, selected_condition_index, conditions)
-
-    #Content string
-    draw_menu_line(stdscr, comenu_y, content_str, HEADER, FORMAT_SELECTED, FORMAT_UNSELECTED, selected_content_index, contents)
-
-    #Edition string
-    draw_menu_line(stdscr, emenu_y, edition_str, HEADER, PLATFORM_SELECTED, PLATFORM_UNSELECTED, selected_editions_index, editions)
-
-    #right_align_text(stdscr, , dmenu_y)
-    draw_menu_line(stdscr, dmenu_y, database_str, HEADER,FORMAT_SELECTED, FORMAT_UNSELECTED, database_index, databases)
-
-    stdscr.refresh()
-
-def draw_message_window(stdscr, msg_string = message_start):
-    message_win = curses.newwin(3, curses.COLS, curses.LINES - 6, 0)
-    message_win.box()
-    message_win.addstr(1, 1, msg_string)
-    message_win.refresh()
-
-def draw_scan_window(stdscr, barcode):
-    scan_str = " Scan Barcode "
+    if active_title is None:
+        handle_error("No title available.")
+        return
     
-    #Scan string
-    stdscr.addstr(curses.LINES - 2, 0, scan_str, curses.A_REVERSE | curses.A_BOLD)
-    #Move cursor to the end of the scan string
-    stdscr.move(curses.LINES - 2, len(scan_str) + 1)
-
-    stdscr.addstr(curses.LINES -2, len(scan_str) + 1, barcode)
-
-def draw_info(stdscr, game_data, selected_title_index, selected_perspective_index = 0):
-    info_win = curses.newwin(curses.LINES - 12, curses.COLS, 6, 0)
-    info_win.box()
-
-    if game_data:
-        max_lines_per_column = curses.LINES - 15  # Adjust for box and padding
-        column_width = curses.COLS // 3
-        col = 0
-        row = 1
-
-        titles = [game_data.get('title')]
-        #Add alternate titles if they exist
-        alternate_titles = [value for key, value in game_data.items() if key.startswith('alternate_title')]
-        titles.extend(alternate_titles)
-        title_highlight = titles[selected_title_index]
-
-        perspectives = [game_data.get('perspective'), game_data.get('alternate_perspective')]
-        perspective_highlight = perspectives[selected_perspective_index]
-
-        #If there is no room, divide into columns
-        for i, (key, value) in enumerate(game_data.items()):
-            if row > max_lines_per_column:
-                col += 1
-                row = 1
-            x = col * column_width + 2  # Adjust for padding
-            info_win.addstr(row, x, f"{key.replace('_', ' ')}: ", curses.A_BOLD)
-            info_win.addstr(row, x + len(f"{key.replace('_', ' ').title()}: "), f"{value}")
-            if key == 'title' or key.startswith('alternate_title'):
-                if value == title_highlight:
-                    info_win.addstr(row, x + len(f"{key.replace('_', ' ').title()}: "), f"{value}", curses.A_UNDERLINE)
-                else:
-                    info_win.addstr(row, x + len(f"{key.replace('_', ' ').title()}: "), f"{value}")
-            if key == 'perspective' or key == 'alternate_perspective':
-                if value == perspective_highlight:
-                    info_win.addstr(row, x + len(f"{key.replace('_', ' ').title()}: "), f"{value}", curses.A_UNDERLINE)
-                else:
-                    info_win.addstr(row, x + len(f"{key.replace('_', ' ').title()}: "), f"{value}")
-            
-            row += 1
-
-    info_win.refresh()
-
-def search_pricecharting(barcode):
-    search_url = f"https://www.pricecharting.com/search-products?q={barcode}"
-    response = requests.get(search_url)
-    soup = BeautifulSoup(response.text, 'html.parser')
-
-    title = soup.find('h2', {'class': 'product_name'})
-    if title:
-        title = title.find('a').text.strip()
-        logging.debug(f"Debug: Pricecharting Stripped Title: {title}")
-        return title
-    else:
-        logging.debug("Debug: Pricecharting Title not found.")
-        return None
-
-def search_mobygames(barcode, selected_platform):
-    global platform_mapping
-    game_url = None
-    search_url = f"https://www.mobygames.com/search/?q={barcode}"
-    response = requests.get(search_url)
-    soup = BeautifulSoup(response.text, 'html.parser')
+    selected_title = active_title.get()
+    selected_platform = active_settings['platforms'][active_selections.get("platforms", tk.IntVar()).get()]
+    selected_contents = active_settings['contents'][active_selections.get("contents", tk.IntVar()).get()]
     
-    # Find the first search result link
-    results = soup.find_all('table', {'class': 'table mb'})
-    first_result = results[0].find('a')
-    logging.debug(f"Debug: Searching Mobygames - First Result: {first_result}")
+    # Move the "The" to the end if the title starts with "The " and it's enabled in settings
+    if selected_title.startswith("The ") and active_settings.get('use_the_suffix', True):
+        selected_title = selected_title[4:] + ", The"
+    
+    # Set case, sleeve, and manual based on content
+    case = 'Y' if selected_contents not in ["No Case", "Sleeve Only", "Loose Disc", "Loose Cartridge", "Nothing"] else 'N'
+    sleeve = 'Y' if selected_contents not in ["No Sleeve", "Loose Disc", "Loose Cartridge", "Nothing"] else 'N'
+    manual = 'Y' if selected_contents not in ["No Manual", "Loose Disc", "Loose Cartridge", "Nothing"] else 'N'
 
+    # Prepare the data to write to the file
+    data = {
+        "Title": [selected_title],
+        "Release Date": [active_game_data.get('release_date')] if active_game_data.get('release_date') else "",
+        "Platform": active_settings['platform_mapping'][active_settings['platforms'][active_selections.get("platforms", tk.IntVar()).get()]] if active_settings['toggles'].get('use_full_platform_name', False) else active_settings['platforms'][active_selections.get("platforms", tk.IntVar()).get()],
+        "Case": [case],
+        "Sleeve": [sleeve],
+        "Manual": [manual],
+        #"Content": contents[selected_content_index],
+        "Condition": active_settings['conditions'][active_selections.get("conditions", tk.IntVar()).get()],
+        "Format": active_settings['formats'][active_selections.get("formats", tk.IntVar()).get()],
+        "Edition": active_settings['editions'][active_selections.get("editions", tk.IntVar()).get()],
+        "Developer": [active_game_data.get('developer')] if active_game_data.get('developer') else "",
+        "Payed": [active_game_data.get('payed')] if active_game_data.get('payed') else "",
+        "DOS": [active_specs.get('DOS', '')] if active_specs else "",
+        "3.1": [active_specs.get('3.1', '')] if active_specs else "",
+        "95": [active_specs.get('95', '')] if active_specs else "",
+        "98": [active_specs.get('98', '')] if active_specs else "",
+        "ME": [active_specs.get('ME', '')] if active_specs else "",
+        "2000": [active_specs.get('2000', '')] if active_specs else "",
+        "XP": [active_specs.get('XP', '')] if active_specs else "",
+        "Vista": [active_specs.get('Vista', '')] if active_specs else "",
+        "Win7": [active_specs.get('7', '')] if active_specs else "",
+        "Win10": [active_specs.get('10', '')] if active_specs else "",
+        "DX": [active_specs.get('DX', '')] if active_specs else "",
+        "Ripped": [active_specs.get('Ripped', '')] if active_specs else "",
+        "Copy Protection": [active_specs.get('Copy Protection', '')] if active_specs else "",
+        "Playable": [active_specs.get('Playable', '')] if active_specs else "",
+        "Spawnable": [active_specs.get('Spawnable', '')] if active_specs else "",
+        "Force Feedback": [active_specs.get('Force Feedback', '')] if active_specs else "",
+        "Dimension": [active_taxonomy.get('Dimension')] if active_taxonomy.get('Dimension') else "",
+        "Time": [active_taxonomy.get('pacing')] if active_taxonomy.get('pacing') else "",
+        "Perspective": [active_perspective.get()] if isinstance(active_perspective, tk.StringVar) else [str(active_perspective)] if str(active_perspective) else "",
+        "Setting": [active_taxonomy.get('setting')] if active_taxonomy.get('setting') else "",
+        "Genre": [active_taxonomy.get('genre')] if active_taxonomy.get('genre') else "",
+        "Gameplay": [active_taxonomy.get('gameplay')] if active_taxonomy.get('gameplay') else ""
+    }
+    
+    # Re-order the columns based on the order in the settings
+    ordered_data = {key: data[key] for key in active_settings['column_order'] if key in data}
+
+    df = pd.DataFrame(ordered_data)
+
+    write_to_file(df, active_settings["platforms"][active_selections.get("platforms", tk.IntVar()).get()])
+    game_log(selected_title, selected_platform, active_game_data.get('release_date', ''))
+    game_clear()
+
+def game_clear():
+    if infoframe is None:
+        return
+    for widget in infoframe.winfo_children():
+        widget.destroy()
+
+    # Clear the active game data and reset the active title and perspective
+    global active_game_data, active_taxonomy, active_physical_data, active_title, active_perspective
+    active_game_data = {}
+    active_taxonomy = {}
+    active_physical_data = {}
+    active_title = None
+    active_perspective = None
+
+    # Focus the search entry
+    if searchframe is None:
+        return
+    for child in searchframe.winfo_children():
+        if isinstance(child, ttk.Entry):
+            # Clear the search entry
+            child.delete(0, tk.END)
+            child.focus()
+            break
+
+def game_decline():
+    game_clear()
+
+def game_log(title, platform, release_date):
+    global logframe, logtree
+
+    if logframe is None or logtree is None:
+        return
+    
+    logtree.insert("", "end", values=(title, platform, release_date))
+    print(f"Debug: Logged game - Title: {title}, Platform: {platform}, Release Date: {release_date}")
+
+def handle_ellipsis(text, max_length=30):
+    return text if len(text) <= max_length else text[:max_length-3] + "..."
+
+def handle_error(message):
+    # Display the error message in a message box
+    messagebox.showerror("Error", message)
+
+def populate_menu(frame, name, options):
+    # Populate a menu with the given options
+    label = ttk.Label(frame, text=name.capitalize(), width=12, anchor=tk.W)
+    label.pack(side=tk.LEFT, padx=4)
+
+    max_length = max(len(option) for option in options)
+
+    var = tk.IntVar(value=0)
+    var.trace_add("write", lambda *args: selections_update(name, var.get()))
+    active_selections[name] = var
+
+    for index, option in enumerate(options):
+        radio = tk.Radiobutton(frame, text=option, variable=var, value=index, indicatoron=False, width=max_length, anchor=tk.CENTER)
+        radio.pack(side=tk.LEFT)
+    
+    radio.config(command=lambda v=var: selections_update(name, v.get()))
+
+def scrape_data_moby_score(soup):
+    moby_score = soup.find('div', class_='mobyscore')
+    if moby_score is None:
+        return
+    
+    active_taxonomy['moby_score'] = moby_score.text.strip()
+    return active_taxonomy.get('moby_score')
+
+def scrape_data_perspective(soup):
+    global active_perspective, active_taxonomy
+    if soup is None:
+        return
+
+    perspectives = scrape_for_dt_mul(soup, 'Perspective') or []
+
+    if not perspectives:
+        visual = scrape_for_dt(soup, 'Visual')
+        if visual:
+            perspectives = [visual]
+
+    active_taxonomy['perspective'] = perspectives
+    active_perspective = tk.StringVar(value=perspectives[0]) if perspectives else None
+
+    return active_taxonomy.get('perspective')
+
+def scrape_data_release_date(soup):
+    if active_settings is None:
+        return
     # Get the actual platform name from the selected_platform abbreviation
-    actual_platform = platform_mapping.get(selected_platform, None)
-
-    # Find the exact game URL that matches the selected platform
-    if first_result:
-        for result in results:
-            platform_tags = result.find_all('small')
-            #logging.debug(f"Debug: All Platform Tags: {platform_tags}")
-            for platform_tag in platform_tags:
-                logging.debug(f"Debug: Searching for {actual_platform} and found Platform Tag: {platform_tag}")
-                if platform_tag and actual_platform in platform_tag.text:
-                    exact_result = platform_tag.find_previous('a')
-                    game_url = exact_result['href']
-                    logging.debug(f"Debug: Found more exact game URL: {game_url}")
-                    break
-    
-    if game_url:
-        logging.debug(f"Debug: Returning Game URL")
-        return game_url
-    else:
-        logging.debug("Debug: Game URL not found.")
+    platform_mapping = active_settings.get("platform_mapping", {})
+    selected_index = active_selections.get("platforms", tk.IntVar()).get()
+    selected_abbrev = active_settings["platforms"][selected_index]
+    actual_platform = platform_mapping.get(selected_abbrev, None)
+    if not actual_platform:
+        handle_error(f"Unknown platform abbreviation '{selected_abbrev}'")
         return None
 
-def scrape_game_data(game_url, selected_platform, selected_format):
-    global platform_mapping
-    release_date = None
-    game_data = {}
+    platform_soup = soup.find('ul', id='platformLinks')
+
+    if platform_soup is None:
+        print("Debug: Release Date not found. Trying another method.")
+        release_date = soup.find('dt', string='Released')
+        if release_date is not None:
+            release_date = release_date.find_next_sibling('dd').find('a').text.strip()
+        if release_date is not None:
+            release_date = re.search(r'\d{4}', release_date)
+        if release_date is not None:
+            release_date = release_date.group()
+        active_game_data['release_date'] = release_date
+        return active_game_data.get('release_date')
+
+    # Convert the platform soup to a list of platforms and release dates
+    platform_soup = platform_soup.text.strip()
+    platform_list = [part for part in re.split(r'[(),]', platform_soup)]
+
+    # Extract the release date for the selected platform
+    for i in range(1, len(platform_list), 2):
+        if platform_list[i].strip() == actual_platform:
+            release_date = platform_list[i - 1].strip()
+            break
+    active_game_data['release_date'] = release_date
+
+    return active_game_data.get('release_date')
+
+def scrape_data_title(soup):
+    global active_game_data, active_title
+    if soup is None:
+        return
+
+    titles = []
+    title_soup = soup.find('h1', {'class':'mb-0'})
+    
+    if title_soup is not None:
+        titles.append(title_soup.text.strip())
+
+    aka_soup = soup.find('div', class_='text-sm text-normal text-muted')
+    if aka_soup is not None:
+        for title in aka_soup.find_all('span'):
+            title = title.text.strip()
+            title = re.sub(r'^\s*aka:\s*', '', title).strip()
+            titles.append(title)
+    
+    active_game_data['title'] = titles
+    active_title = tk.StringVar(value=titles[0])
+    return titles
+
+def scrape_game_data(game_url):
+    global active_game_data, active_taxonomy, active_physical_data
+
+    if active_settings is None:
+        return None
+    
+    active_game_data = {key: value for key, value in active_settings.get("scraped_data", {}).items()}
+    active_taxonomy = {key: value for key, value in active_settings.get("scraped_taxonomy", {}).items()}
+    print(f"Debug: Initial Game Data: {active_game_data}")
+    print(f"Debug: Initial Taxonomy Data: {active_taxonomy}")
 
     response = requests.get(game_url)
-    soup = BeautifulSoup(response.text, 'html.parser')
-    
+
+    if response.status_code != 200:
+        handle_error(f"Failed to retrieve game data from the website. Status code: {response.status_code}")
+        return None
+
+    soup = bs.BeautifulSoup(response.text, 'html.parser')
+
+    if soup is None:
+        handle_error("Failed to retrieve game data from the website.")
+        return None
+
     # Extract game data
-    title = soup.find('h1', {'class':'mb-0'})
-    if title:
-        title = title.text.strip()
-        game_data['title'] = title
-        logging.debug(f"Debug: Scraped Title: {title}")
+    scrape_data_moby_score(soup)
+    scrape_data_perspective(soup)
+    scrape_data_release_date(soup)
+    scrape_data_title(soup)
 
-    alternate_title = soup.find('div', class_='text-sm text-normal text-muted')
-    if alternate_title:
-        alternate_titles = alternate_title.find_all('span')
-        logging.debug(f"Debug: Found Alternate Title: {alternate_titles}")
-        i = 1
-        for alternate_title in alternate_titles:
-            alternate_title = alternate_title.text.strip()
-            alternate_title = re.sub(r'^\s*aka:\s*', '', alternate_title).strip()
-            game_data[f'alternate_title{i}'] = alternate_title
-            logging.debug(f"Debug: Scraped Alternate Title{i}: {alternate_title}")
-            i += 1
-    else:
-        logging.debug("Debug: No Alternate Title found.")
+    active_game_data['developer'] = scrape_for_dt(soup, 'Developers') or ''
+    active_taxonomy['pacing'] = scrape_for_dt(soup, 'Pacing') or 'Real-Time'
+    active_taxonomy['genre'] = scrape_for_dt(soup, 'Genre') or ''
+    active_taxonomy['gameplay'] = scrape_for_dt(soup, 'Gameplay') or ''
+    active_taxonomy['setting'] = scrape_for_dt(soup, 'Setting') or ''
 
-    # Get the actual platform name from the selected_platform abbreviation
-    actual_platform = platform_mapping.get(selected_platform, None)
-    if not actual_platform:
-        logging.debug(f"Error: Unknown platform abbreviation '{selected_platform}'")
+    active_physical_data['format'] = active_settings["formats"][active_selections.get("formats", tk.IntVar()).get()]
+    active_physical_data['condition'] = active_settings["conditions"][active_selections.get("conditions", tk.IntVar()).get()]
+    active_physical_data['content'] = active_settings["contents"][active_selections.get("contents", tk.IntVar()).get()]
+    active_physical_data['edition'] = active_settings["editions"][active_selections.get("editions", tk.IntVar()).get()]
 
-    platform = soup.find('ul', id='platformLinks')
-    if platform:
-        platform = platform.text.strip()
-        platforms = ''.join(platform.split()).replace(')', ',').replace('(', ',')
-
-        # Extract the release date for the selected platform
-        platform_list = platforms.split(',')
-        for i in range(1, len(platform_list), 2):
-            if platform_list[i].strip() == actual_platform:
-                release_date = platform_list[i - 1].strip()
-                break
-        game_data['release_date'] = release_date
-        logging.debug(f"Debug: Platform-matched Release Date: {release_date}")
-
-    pacing = find_dt(soup, 'Pacing')
-    if pacing:
-        game_data['pacing'] = pacing
-    if game_data.get('pacing') is None:
-        game_data['pacing'] = 'Real-Time'
-    developer = find_dt(soup, 'Developers')
-    if developer:
-        game_data['developer'] = developer
-    genre = find_dt(soup, 'Genre')
-    if genre:
-        game_data['genre'] = genre
-    perspective = find_dt_mul(soup, 'Perspective')
-    if perspective:
-        logging.debug(f"Debug: Perspective: {perspective}")
-        game_data['perspective'] = perspective.get('Perspective1')
-        game_data['alternate_perspective'] = perspective.get('Perspective2')
-    # Use Visual as a backup for Perspective
-    visual = find_dt(soup, 'Visual')
-    if visual and game_data.get('perspective') is None:
-        logging.debug(f"Debug: Using Visual as a backup for Perspective: {visual}")
-        game_data['perspective'] = visual
-    gameplay = find_dt(soup, 'Gameplay')
-    if gameplay:
-        game_data['gameplay'] = gameplay
-    setting = find_dt(soup, 'Setting')
-    if setting:
-        game_data['setting'] = setting
-
-    moby_score = soup.find('div', class_='mobyscore')
-    if moby_score:
-        moby_score = moby_score.text.strip()
-        game_data['moby_score'] = moby_score
-        logging.debug(f"Debug: Scraped Moby Score: {moby_score}")
-
-    # Find the release date that matches the selected platform
-    if release_date == None:
-        logging.debug("Debug: Release Date not found. Trying another method.")
-        release_date = soup.find('dt', string='Released').find_next_sibling('dd').find('a').text.strip()
-        release_date = re.search(r'\d{4}', release_date).group()
-        logging.debug(f"Debug: Backup Release Date: {release_date}")
-        game_data['release_date'] = release_date
-
-    logging.debug(f"Debug: Game Data: {game_data}")
-    return game_data
+    print(f"Debug: Game Data: {active_game_data}")
+    print(f"Debug: Taxonomy Data: {active_taxonomy}")
+    print(f"Debug: Physical Data: {active_physical_data}")
+    return active_game_data
 
 def scrape_moby_specs(game_url):
     game_url = f"{game_url}/specs"
     response = requests.get(game_url)
-    soup = BeautifulSoup(response.text, 'html.parser')
+    soup = bs.BeautifulSoup(response.text, 'html.parser')
 
     os_found_dict = {}
 
     # List of operating systems
-    os_to_check = ['DOS', '3.1', '95', '98', '2000', 'XP', 'Vista', '7', '8', '10']
+    os_to_check = ['DOS', '3.1', '95', '98', 'ME', '2000', 'XP', 'Vista', '7', '8', '10']
     
     specs = soup.find('table', class_='table table-nowrap text-sm')
 
-    if specs:
-        os_spec = soup.find('td', string='Minimum OS Class Required:')
-        logging.debug(f"Debug: Found OS: {os_spec}")
-        os_list = []
-        if os_spec:
-            os_version = os_spec.find_next_sibling('td').text.strip()
-            os_version = os_version.replace('Windows ', '')
-            logging.debug(f"Debug: Found OS Version: {os_version}")
-            os_list.append(os_version)
-            
-            # Create a list with each OS and 'Y' or 'N' depending on whether it was found
-            # Any OS later will be set to TBD
-            found_y = False
-            for os in os_to_check:
-                if os not in os_list:
-                    os_found_dict[os] = 'N'
-                    continue
-                if not found_y:
-                    os_found_dict[os] = 'Y'
-                    found_y = True
-                    continue
-                os_found_dict[os] = 'TBD'
+    if specs is None:
+        print("Debug: No specs table found.")
+        return None
 
-        dx_spec = specs.find('td', string='Minimum DirectX Version Required:')
-        logging.debug(f"Debug: Found DirectX: {dx_spec}")
-        if dx_spec:
-            dx_version = dx_spec.find_next_sibling('td').text.strip()
-            #Strip everything that isn't or anything after the version number
-            dx_version = re.search(r'\d+(\.\d+)?[a-zA-Z]*$', dx_version).group()
-            logging.debug(f"Debug: DirectX Version: {dx_version}")
-            os_found_dict['DX'] = 'DX' + dx_version
+    os_spec = soup.find('td', string='Minimum OS Class Required:')
+    print(f"Debug: Found OS: {os_spec}")
+
+    os_list = []
+    if os_spec:
+        os_version = os_spec.find_next_sibling('td').text.strip()
+        os_version = os_version.replace('Windows ', '')
+        print(f"Debug: Found OS Version: {os_version}")
+        os_list.append(os_version)
+        
+        # Create a list with each OS and 'Y' or 'N' depending on whether it was found
+        # Any OS later will be set to TBD
+        found_y = False
+        for os in os_to_check:
+            if os not in os_list and not found_y:
+                os_found_dict[os] = 'N'
+                continue
+            if not found_y:
+                os_found_dict[os] = 'Y'
+                found_y = True
+                continue
+            os_found_dict[os] = 'TBD'
+
+    dx_spec = specs.find('td', string='Minimum DirectX Version Required:')
+    print(f"Debug: Found DirectX: {dx_spec}")
+    if dx_spec:
+        dx_version = dx_spec.find_next_sibling('td').text.strip()
+        #Strip everything that isn't or anything after the version number
+        dx_version = re.search(r'\d+(\.\d+)?[a-zA-Z]*$', dx_version)
+        if dx_version is not None:
+            dx_version = dx_version.group()
+        print(f"Debug: DirectX Version: {dx_version}")
+        os_found_dict['DX'] = 'DX' + dx_version if dx_version else 'Unknown'
 
     if os_found_dict is not None:
-        logging.debug(f"Debug: OS Found List: {os_found_dict}")
+        print(f"Debug: OS Found List: {os_found_dict}")
 
     return os_found_dict
 
-def find_dt(soup, text):
+def scrape_for_dt(soup, text):
     element = soup.find('dt', string=text)
-    logging.debug(f"Debug: Found Element: {element}")
+    print(f"Debug: Found Element: {element}")
     if element:
         element = element.find_next_sibling('dd')
         element = element.find('a').text.strip()
         element = element.replace(',', '')
-        logging.debug(f"Debug: {text}: {element}")
+        print(f"Debug: {text}: {element}")
         return element
     return None
 
-def find_dt_mul(soup, text):
+def scrape_for_dt_mul(soup, text):
+    # Scrape multiple dd elements for a given dt element and return them as a list
     element = soup.find('dt', string=text)
-    logging.debug(f"Debug: Found Element for multiple: {element}")
 
-    primary_value = None
-    alternate_value = None
+    if element is None:
+        return None
     
-    if element:
-        siblings = element.find_next_siblings()
-        logging.debug(f"Debug: Found Siblings: {siblings}")
-        dd_elements = []
-        for sibling in siblings:
-            if sibling.name == 'dd':
-                dd_elements.append(sibling)
-                logging.debug(f"Debug: Found dd element: {sibling}")
-                logging.debug(f"Debug: dd_elements: {dd_elements}")
-                for dd_element in dd_elements:
-                    a_tags = dd_element.find_all('a')
-                    for a_tag in a_tags:
-                        if primary_value is None:
-                            primary_value = a_tag.text.strip()
-                        elif alternate_value is None:
-                            alternate_value = a_tag.text.strip()
-            elif sibling.name == 'dt':
-                break
+    siblings = element.find_next_siblings()
+    dd_elements = []
+    for sibling in siblings:
+        if sibling.name == 'dd':
+            dd_elements.append(sibling) 
+        elif sibling.name == 'dt':
+            break
 
-    logging.debug(f"Debug: Returning {text}1: {primary_value}, {text}2: {alternate_value}")
-    return {f'{text}1': primary_value, f'{text}2': alternate_value}
+    a_elements = []
+    for dd_element in dd_elements:
+        a_tags = dd_element.find_all('a')
+        for a_tag in a_tags:
+            a_elements.append(a_tag.text.strip())
 
-def handle_platform_selection(key):
-    global selected_platform_index
-    if key == curses.KEY_F1:
-        selected_platform_index = (selected_platform_index + 1) % len(platforms)
+    return a_elements
 
-def handle_format_selection(key):
-    global selected_format_index
-    if key == curses.KEY_F2:
-        selected_format_index = (selected_format_index + 1) % len(formats)
+def search_game(query):
+    global active_specs
+    # Search for the name in the settings and return the corresponding value
+    if active_settings is None:
+        return None
 
-def handle_condition_selection(key):
-    global selected_condition_index
-    if key == curses.KEY_F3:
-        selected_condition_index = (selected_condition_index + 1) % len(conditions)
+    search_url = f"https://www.mobygames.com/search/?q={query}"
+    response = requests.get(search_url)
+    soup = bs.BeautifulSoup(response.text, 'html.parser')
+    
+    # Find the first search result link
+    results = soup.find_all('table', {'class': 'table mb'})
 
-def handle_content_selection(key):
-    global selected_content_index
-    if key == curses.KEY_F4:
-        selected_content_index = (selected_content_index + 1) % len(contents)
+    # Get the current platform from the active selections    
+    active_platform_index = active_selections.get("platforms", tk.IntVar()).get()
+    active_platform = active_settings["platforms"][active_platform_index]
 
-def handle_editions_selection(key):
-    global selected_editions_index
-    if key == curses.KEY_F5:
-        selected_editions_index = (selected_editions_index + 1) % len(editions)
+    # Use platform mapping to convert the platform name to the format used on Mobygames
+    platform_mapping = active_settings.get("platform_mapping", {})
+    platform_name = platform_mapping.get(active_platform, active_platform)
 
-def handle_database_selection(key):
-    global database_index
-    if key == curses.KEY_F6:
-        database_index = (database_index + 1) % len(databases)
+    url = None
+    # Find the URL that matches the selected platform
+    for result in results:
+        platform_tags = result.find_all('small')
+        for platform_tag in platform_tags:
+            if platform_name not in platform_tag.text:
+                continue
 
-def handle_title_selection(key, game_data):
-    global selected_title_index
-    if key == curses.KEY_F7:
-        logging.debug(f"Hit F7")
-        # Collect all titles and alternate titles
-        titles = [game_data.get('title')]
-        alternate_titles = [value for key, value in game_data.items() if key.startswith('alternate_title')]
-        titles.extend(alternate_titles)
+            exact_result = platform_tag.find_previous('a')
+            url = exact_result['href']
+            print(f"Debug: Found URL: {url}")
+            break
 
-        logging.debug(f"Debug: {len(titles)} Available Titles: {titles}")
-        logging.debug(f"Debug: Currently selected title: {selected_title_index}")
+    if url is None:
+        handle_error(f"No results found for {query} for {platform_name}")
+        return None
+    
+    active_game_data = scrape_game_data(url)
+    if active_game_data is None:
+        handle_error("Failed to scrape game data.")
+        return None
+    active_specs = scrape_moby_specs(url)
+    update_button_states("normal")
+    update_info_frame()
 
-        # Update the selected_title_index based on the number of titles
-        if len(titles) > 1:
-            selected_title_index = (selected_title_index + 1) % len(titles)
-            logging.debug(f"Debug: Updated selected_title_index: {selected_title_index}")
-            logging.debug(f"Debug: Currently selected title: {titles[selected_title_index]}")
+def selections_update(name, value):
+    # Update the defaults based on the platform selection
+    if name == "platforms":
+        settings_set_defaults(value)
 
-def handle_perspective_selection(key, game_data):
-    global selected_perspective_index
-    if key == curses.KEY_F8 and game_data.get('alternate_perspective') is not None:
-        selected_perspective_index = (selected_perspective_index + 1) % 2
-        logging.debug(f"Debug: Currently selected perspective: {selected_perspective_index}")
+    if active_settings is None:
+        return
+
+    for setting in active_physical_data.keys():
+        setting_plural = setting + "s"
+        active_physical_data[setting] = active_settings[setting_plural][active_selections.get(setting_plural, tk.IntVar()).get()]
+
+    update_info_frame()
+
+def settings_load():
+    # Load settings from the settings.json file
+    global active_settings
+    try:
+        with open("settings.json", "r") as f:
+            active_settings = json.load(f)
+        print("Settings loaded successfully.")
+    except Exception as e:
+        print(f"Error loading settings: {e}")
+        #handle_error(f"Error loading settings: {e}")
+        active_settings = None
+
+def settings_set_defaults(platform_index:int = 0):
+    # Set default values for settings based on the selected platform
+    global active_settings
+    if active_settings is None:
+        active_settings = {}
+
+    if platform_index is None:
+        return
+
+    # Get all the defaults for the selected platform, or use the "Default" defaults if the platform is not found
+    platform_settings = active_settings.get("platform_defaults", {})
+    platform_name = active_settings["platforms"][platform_index]
+    platform_defaults = platform_settings.get(platform_name, platform_settings.get("Default", {}))
+
+    for setting, value in platform_defaults.items():
+        if isinstance(active_selections.get(setting), tk.IntVar):
+            active_selections[setting].set(value)
+
+    return
+
+def update_button_states(state):
+    # Find the search frame in the frames_padded list and update the state of the buttons
+    search_frame = None
+    for frame in frames_padded:
+        if frame.cget("text") == "Search":
+            search_frame = frame
+            break
+    if search_frame is not None:
+        for child in search_frame.winfo_children():
+            if isinstance(child, ttk.Button):
+                child.config(state=state)
+
+def update_info_choice(key, value):
+    global active_title, active_perspective
+    selected_value = value if isinstance(value, str) else value.get()
+    if key == 'title' and isinstance(active_game_data.get('title'), list):
+        if active_title is None or not isinstance(active_title, tk.StringVar):
+            active_title = tk.StringVar(value=selected_value)
+        else:
+            active_title.set(selected_value)
+    elif key == 'perspective' and isinstance(active_taxonomy.get('perspective'), list):
+        if active_perspective is None or not isinstance(active_perspective, tk.StringVar):
+            active_perspective = tk.StringVar(value=selected_value)
+        else:
+            active_perspective.set(selected_value)
+    elif key in active_game_data:
+        active_game_data[key] = selected_value
+    elif key in active_taxonomy:
+        active_taxonomy[key] = selected_value
+    elif key in active_physical_data:
+        active_physical_data[key] = selected_value
+
+def update_info_frame():
+    global infoframe, active_game_data, active_taxonomy, active_physical_data, active_title, active_perspective
+    if infoframe is None:
+        return
+    
+    # Clear the info frame
+    for widget in infoframe.winfo_children():
+        widget.destroy()
+
+    if not active_game_data:
+        for i in range(6):
+            for j in range(3):
+                empty_label = ttk.Label(infoframe, text="", style=f"InfoData{'Even' if (i + j) % 2 == 0 else 'Odd'}.TLabel")
+                empty_label.grid(row=i, column=j*2, sticky="nsew")
+                empty_label = ttk.Label(infoframe, text="", style=f"InfoData{'Even' if (i + j) % 2 == 0 else 'Odd'}.TLabel")
+                empty_label.grid(row=i, column=j*2+1, sticky="nsew")
+        return
+    
+    active_game_items = list(active_game_data.items())
+    active_taxonomy_items = list(active_taxonomy.items())
+    active_physical_items = list(active_physical_data.items())
+
+    extra_titles = max(len(active_game_data.get('title', [])) - 1, 0)
+    extra_perspectives = max(len(active_taxonomy.get('perspective', [])) - 1, 0)
+    max_extra = max(extra_titles, extra_perspectives)
+    max_rows = max(len(active_game_items) + extra_titles, len(active_taxonomy_items) + extra_perspectives, len(active_physical_items))
+
+    style = ttk.Style()
+    style.configure("InfoDataEven.TLabel", background="#f8f8f8")
+    style.configure("InfoDataOdd.TLabel", background="#e8e8e8")
+
+    current_title = active_title.get() if isinstance(active_title, tk.StringVar) else None
+    current_perspective = active_perspective.get() if isinstance(active_perspective, tk.StringVar) else None
+
+    active_game_data_offset = 0
+    active_taxonomy_offset = 0
+    active_physical_data_offset = 0
+    # Update the info frame with the current game data
+    for i in range(max_rows - len(active_game_data.get('title', []))):
+        key, value = active_game_items[i] if i < len(active_game_items) else ("", "")
+        suffix = ":" if key else ""
+        data_label = ttk.Label(infoframe, text=handle_ellipsis(f"{key.capitalize()}{suffix}"), style=f"InfoData{'Even' if (i + active_game_data_offset) % 2 == 0 else 'Odd'}.TLabel")
+        data_label.grid(row=i + active_game_data_offset, column=0, sticky="nsew")
+
+        if key and key.lower() == 'title' and len(value) > 1:
+
+            active_title = tk.StringVar(value=current_title if current_title is not None and current_title in value else value[0])
+            for idx, t in enumerate(value):
+                if idx == 0:
+                    row = i + active_game_data_offset
+                else:
+                    active_game_data_offset += 1
+                    row = i + active_game_data_offset
+                    empty_label = ttk.Label(infoframe, text="", style=f"InfoData{'Even' if row % 2 == 0 else 'Odd'}.TLabel")
+                    empty_label.grid(row=row, column=0, sticky="nsew")
+
+                rb = tk.Radiobutton(infoframe, text=handle_ellipsis(t), variable=active_title, value=t, anchor=tk.W, indicatoron=False, height=1, command=lambda k=key, v=t: update_info_choice(k, v))
+                rb.grid(row=row, column=1, sticky="nsew")
+        else:
+            value_label = ttk.Label(infoframe, text=handle_ellipsis(f"{value}"), style=f"InfoData{'Even' if (i + active_game_data_offset) % 2 == 0 else 'Odd'}.TLabel")
+            value_label.grid(row=i + active_game_data_offset, column=1, sticky="nsew")
+
+    # Update the info frame with the current taxonomy data
+    for j in range(max_rows - len(active_taxonomy.get('perspective', []))):
+        key, value = active_taxonomy_items[j] if j < len(active_taxonomy_items) else ("", "")
+        suffix = ":" if key else ""
+        data_label = ttk.Label(infoframe, text=handle_ellipsis(f"{key.capitalize()}{suffix}"), style=f"InfoData{'Even' if (j + active_taxonomy_offset) % 2 == 0 else 'Odd'}.TLabel")
+        data_label.grid(row=j + active_taxonomy_offset, column=2, sticky="nsew")
+
+        if key and key.lower() == 'perspective' and len(value) > 1:
+            active_perspective = tk.StringVar(value=current_perspective if current_perspective is not None and current_perspective in value else value[0])
+            for idx, p in enumerate(value):
+                if idx == 0:
+                    row = j + active_taxonomy_offset
+                else:
+                    active_taxonomy_offset += 1
+                    row = j + active_taxonomy_offset
+                    empty_label = ttk.Label(infoframe, text="", style=f"InfoData{'Even' if row % 2 == 0 else 'Odd'}.TLabel")
+                    empty_label.grid(row=row, column=2, sticky="nsew")
+
+                rb = tk.Radiobutton(infoframe, text=handle_ellipsis(p), variable=active_perspective, value=p, anchor=tk.W, indicatoron=False, height=1, command=lambda k=key, v=p: update_info_choice(k, v))
+                rb.grid(row=row, column=3, sticky="nsew")
+        else:
+            value_label = ttk.Label(infoframe, text=handle_ellipsis(f"{value}"), style=f"InfoData{'Even' if (j + active_taxonomy_offset) % 2 == 0 else 'Odd'}.TLabel")
+            value_label.grid(row=j + active_taxonomy_offset, column=3, sticky="nsew")
+
+    # Update the info frame with the current physical data
+    for k in range(max_rows - max_extra):
+        key, value = active_physical_items[k] if k < len(active_physical_items) else ("", "")
+        suffix = ":" if key else ""
+        data_label = ttk.Label(infoframe, text=handle_ellipsis(f"{key.capitalize()}{suffix}"), style=f"InfoData{'Even' if (k + active_physical_data_offset) % 2 == 0 else 'Odd'}.TLabel")
+        data_label.grid(row=k + active_physical_data_offset, column=4, sticky="nsew")
+        value_label = ttk.Label(infoframe, text=handle_ellipsis(f"{value}"), style=f"InfoData{'Even' if (k + active_physical_data_offset) % 2 == 0 else 'Odd'}.TLabel")
+        value_label.grid(row=k + active_physical_data_offset, column=5, sticky="nsew")
+
+    cols, rows = infoframe.grid_size()
+    for col in range(cols):
+        infoframe.columnconfigure(col, weight=1, uniform="info")
+    for row in range(rows):
+        infoframe.rowconfigure(row, weight=1, minsize=20)
 
 def write_to_file(data, platform):
     # Load settings
@@ -517,7 +610,6 @@ def write_to_file(data, platform):
         settings = json.load(f)
 
     file_name = f"{platform}_scanned_collection.csv"
-    file_exists = os.path.isfile(file_name)
     xls_format = settings['toggles'].get('use_xls', False)
     xls_collate = settings['toggles'].get('use_xls_collate_sheets', False)
     clipboard = settings['toggles'].get('use_clipboard', True)
@@ -531,258 +623,162 @@ def write_to_file(data, platform):
     # Determine columns to drop
     # Drop the specified columns, or the columns that don't match the platform
     drop_columns = []
-    for key, columns in settings['dropped_columns'].items():
+    for key, columns in settings['columns_to_drop'].items():
         if key == platform or (key.startswith('NOT_') and key[4:] != platform):
             # Drop the specified columns, but only if they exist in the DataFrame
             drop_columns.extend([col for col in columns if col in data.columns])
 
     # Drop columns
-    data = data.drop(columns=drop_columns, errors='ignore')    
+    data = data.drop(columns=drop_columns, errors='ignore')  
+    file_exists = os.path.isfile(file_name) 
+    mode = 'a' if file_exists else 'w' 
 
     # Write the DataFrame to a CSV file with tab-separated fields
-    if xls_format:
-        with pd.ExcelWriter(file_name, mode='a', engine='overlay') as writer:
-            data.to_excel(writer, sheet_name=platform, index=False, header=not file_exists)
-            clipboard_data = data.to_excel(index=False)
+    if xls_format and file_exists: 
+        with pd.ExcelWriter(file_name, mode='a', engine='openpyxl', if_sheet_exists='overlay') as writer:
+            start_row = writer.sheets[platform].max_row if platform in writer.sheets else 0
+            data.to_excel(writer, sheet_name=platform, index=False, header=not file_exists, startrow=start_row)
+    elif xls_format and not file_exists:
+        with pd.ExcelWriter(file_name, mode='w', engine='openpyxl') as writer:
+            data.to_excel(writer, sheet_name=platform, index=False, header=True)
     else:
-        data.to_csv(file_name, mode='a', sep='\t', index=False, header=not file_exists)
-        clipboard_data = data.to_csv(sep='\t', index=False, header=False)
+        data.to_csv(file_name, mode=mode, sep='\t', index=False, header=not file_exists)
+        
     if clipboard:
+        clipboard_data = data.to_csv(sep='\t', index=False, header=False)
         pyperclip.copy(clipboard_data)
 
-def main(stdscr):
-    global selected_platform_index, selected_format_index, selected_condition_index, selected_content_index, selected_editions_index, selected_title_index, selected_perspective_index, database_index, message, barcode, game_url, game_data, titles
-    global message_correct_game, message_success_str, message_fail_str, message_no_game
+    return
 
-    # Load settings
-    with open('settings.json', 'r') as f:
-        settings = json.load(f)
+def main():
+    global infoframe, searchframe, logframe, logtree
+    if active_settings is None:
+        handle_error("No settings available.")
+        return
 
-    curses.curs_set(1)  # Hide the cursor
-    stdscr.nodelay(1)  # Make getch() non-blocking
-    stdscr.timeout(100)  # Refresh every 100 milliseconds
+    root = tk.Tk()
+    root.title("GBScan")
+    root.columnconfigure(0, weight=1)
+    root.rowconfigure(0, weight=1)
 
-    previous_platform_index = selected_platform_index
+    style = ttk.Style(root)
+    style.theme_use('default')
 
-    while True:
-        draw_menu(stdscr)
-        draw_scan_window(stdscr, barcode)
-        draw_info(stdscr, game_data, selected_title_index, selected_perspective_index)
-        if message != default_message:
-            draw_message_window(stdscr, message)
-        else:
-            draw_message_window(stdscr)
-        
-        key = stdscr.getch()
-        
-        if game_data:
-            message = message_correct_game
-            chosen_title = titles[selected_title_index]
-            chosen_perspective = perspectives[selected_perspective_index]
-        else:
-            selected_title_index = 0
-            selected_perspective_index = 0
+    mainrow = 0
+    mainframe = ttk.Frame(root, padding="8")
+    mainframe.grid(row=0, column=0, sticky=tk.N+tk.S+tk.E+tk.W)
 
-        # Handle escape key
-        if key == 27:
-            break
-        
-        handle_platform_selection(key)
-        handle_format_selection(key)
-        handle_condition_selection(key)
-        handle_content_selection(key)
-        handle_editions_selection(key)
-        handle_database_selection(key)
+    contextrow = 0
+    contextframe = ttk.LabelFrame(mainframe, text="Setup", padding="8")
+    contextframe.grid(row=mainrow, column=0, sticky=tk.W+tk.E)
+    mainrow += 1
 
-        def update_game_data():
-            global game_data
-            if game_data:
-                #game_data['platform'] = platforms[selected_platform_index] if settings.get('use_full_platform_name', False) else platform_mapping[platforms[selected_platform_index]]
-                game_data['platform'] = platform_mapping[platforms[selected_platform_index]] if settings['toggles'].get('use_full_platform_name', False) else platforms[selected_platform_index]
-                game_data['format'] = formats[selected_format_index]
-                game_data['condition'] = conditions[selected_condition_index]
-                game_data['content'] = contents[selected_content_index]
-                game_data['edition'] = editions[selected_editions_index]
-                if formats[selected_format_index] == "Cartridge" and contents[selected_content_index] == "Loose Disc":
-                    contents[selected_content_index] = "Loose Cartridge"
-                elif formats[selected_format_index] != "Cartridge" and contents[selected_content_index] == "Loose Cartridge":
-                    contents[selected_content_index] = "Loose Disc"
+    platformframe = ttk.Frame(contextframe, padding="2")
+    platformframe.grid(row=contextrow, column=0, sticky=tk.W+tk.E)
+    frames.append(platformframe)
+    contextrow += 1
 
-        update_game_data()
-        
-        if game_data is not None:
-            # Check for any alternate titles dynamically
-            has_alternate_titles = any(key.startswith('alternate_title') for key in game_data.keys())
-            if has_alternate_titles:
-                handle_title_selection(key, game_data)
-            if game_data.get('alternate_perspective') is not None:
-                handle_perspective_selection(key, game_data)
-        
-        if ord('0') <= key <= ord('9') and game_data == None:
-            # Handle number keys for the scan window
-            barcode += chr(key)
-        
-        elif ord('a') <= key <= ord('z') or ord('A') <= key <= ord('Z') and game_data == None:
-            # Handle letter keys for the scan window
-            barcode += chr(key)
+    populate_menu(platformframe, "platforms", active_settings["platforms"])
 
-        elif key == ord(' ') and game_data == None:
-            barcode += chr(key)
+    formatframe = ttk.Frame(contextframe, padding="2")
+    formatframe.grid(row=contextrow, column=0, sticky=tk.W+tk.E)
+    frames.append(formatframe)
+    contextrow += 1
 
-        elif (key == curses.KEY_BACKSPACE or key == 127 or key == 8) and game_data == None:
-            barcode = barcode[:-1]
+    populate_menu(formatframe, "formats", active_settings["formats"])
 
-        elif key == 10 and game_data == None:  # Enter key
-            if database_index == 0:
-                logging.debug(f"Debug: Searching Mobygames for a {platforms[selected_platform_index]} game with barcode: {barcode}")
-                game_url = search_mobygames(barcode, platforms[selected_platform_index])
-            elif database_index == 1:
-                title = search_pricecharting(barcode)
-                logging.debug(f"Debug: Pricecharting Returned Title: {title}")
-                if title:
-                    game_url = search_mobygames(title, platforms[selected_platform_index])
-                    logging.debug(f"Debug: Game URL: {game_url}")
-                else:
-                    message = message_no_game
-                    logging.debug("Debug: Game not found.")
-                    barcode = ""
-            
-            # Only do a scrape if a game URL was found
-            if game_url != None:
-                game_data = scrape_game_data(game_url, platforms[selected_platform_index], formats[selected_format_index])
-                if platforms[selected_platform_index] == "PC":
-                    extra_game_data = scrape_moby_specs(game_url)
-                    if extra_game_data != None:
-                        logging.debug(f"Debug: Extra Game Data: {extra_game_data}")
-                        logging.debug(f"Debug: DirectX Version: {extra_game_data.get('DX')}")
-                        logging.debug(f"Appending to game data: {extra_game_data}")
-                        game_data.update(extra_game_data)
-                        logging.debug(f"Debug: Updated Game Data: {game_data}")
-                
-                titles = [game_data.get('title')]
-                # Add alternate titles if they exist
-                alternate_titles = [value for key, value in game_data.items() if key.startswith('alternate_title')]
-                titles.extend(alternate_titles)
+    conditionframe = ttk.Frame(contextframe, padding="2")
+    conditionframe.grid(row=contextrow, column=0, sticky=tk.W+tk.E)
+    frames.append(conditionframe)
+    contextrow += 1
 
-                perspectives = [game_data.get('perspective'), game_data.get('alternate_perspective')]
-                chosen_title = titles[selected_title_index]
-                chosen_perspective = perspectives[selected_perspective_index]
-                # Reset the game_url, so you don't get bad data if the next barcode is invalid
-                
+    populate_menu(conditionframe, "conditions", active_settings["conditions"])
 
-                #game_data['platform'] = platforms[selected_platform_index]
-                #game_data['platform'] = platforms[selected_platform_index] if settings.get('use_full_platform_name', False) else platform_mapping[platforms[selected_platform_index]]
-                game_data['platform'] = platform_mapping[platforms[selected_platform_index]] if settings['toggles'].get('use_full_platform_name', False) else platforms[selected_platform_index]
-                game_data['format'] = formats[selected_format_index]
-                game_data['condition'] = conditions[selected_condition_index]
-                game_data['content'] = contents[selected_content_index]
-                game_data['edition'] = editions[selected_editions_index]
+    contentframe = ttk.Frame(contextframe, padding="2")
+    contentframe.grid(row=contextrow, column=0, sticky=tk.W+tk.E)
+    frames.append(contentframe)
+    contextrow += 1
 
-                game_url = None
-                barcode = ""
-            else:
-                message = message_no_game
-                logging.debug("Debug: Game not found.")
-                barcode = ""
-                    
-        # Accept the game data and prepare it for writing to the file
-        elif (key == ord('y') or key == 10) and game_data != None:
+    populate_menu(contentframe, "contents", active_settings["contents"])
 
-            message = chosen_title + message_success_str
-            logging.debug(f"Debug: {chosen_title} added successfully.")
-            
-            # Move the "The" to the end if the title starts with "The " and it's enabled in settings
-            if chosen_title.startswith("The ") and settings.get('suffix_the', True):
-                chosen_title = chosen_title[4:] + ", The"
-            
-            # Set case, sleeve, and manual based on content
-            case = 'Y' if contents[selected_content_index] not in ["No Case", "Sleeve Only", "Loose Disc", "Loose Cartridge", "Nothing"] else 'N'
-            sleeve = 'Y' if contents[selected_content_index] not in ["No Sleeve", "Loose Disc", "Loose Cartridge", "Nothing"] else 'N'
-            manual = 'Y' if contents[selected_content_index] not in ["No Manual", "Loose Disc", "Loose Cartridge", "Nothing"] else 'N'
+    editionframe = ttk.Frame(contextframe, padding="2")
+    editionframe.grid(row=contextrow, column=0, sticky=tk.W+tk.E)
+    frames.append(editionframe)
+    contextrow += 1
 
-            # Prepare the data to write to the file
-            data = {
-                    "Title": [chosen_title],
-                    "Release Date": [game_data.get('release_date')] if game_data.get('release_date') else "",
-                    "Platform": platform_mapping[platforms[selected_platform_index]] if settings['toggles'].get('use_full_platform_name', False) else platforms[selected_platform_index],
-                    "Case": [case],
-                    "Sleeve": [sleeve],
-                    "Manual": [manual],
-                    #"Content": contents[selected_content_index],
-                    "Condition": conditions[selected_condition_index],
-                    "Format": formats[selected_format_index],
-                    "Edition": editions[selected_editions_index],
-                    "Developer": [game_data.get('developer')] if game_data.get('developer') else "",
-                    "Payed": [game_data.get('payed')] if game_data.get('payed') else "",
-                    "DOS": [game_data.get('DOS')] if game_data.get('DOS') else "",
-                    "3.1": [game_data.get('3.1')] if game_data.get('3.1') else "",
-                    "95": [game_data.get('95')] if game_data.get('95') else "",
-                    "98": [game_data.get('98')] if game_data.get('98') else "",
-                    "ME": [game_data.get('ME')] if game_data.get('ME') else "",
-                    "2000": [game_data.get('2000')] if game_data.get('2000') else "",
-                    "XP": [game_data.get('XP')] if game_data.get('XP') else "",
-                    "Vista": [game_data.get('Vista')] if game_data.get('Vista') else "",
-                    "Win7": [game_data.get('7')] if game_data.get('7') else "",
-                    "Win10": [game_data.get('10')] if game_data.get('10') else "",
-                    "DX": [game_data.get('DX')] if game_data.get('DX') else "",
-                    "Ripped": [game_data.get('Ripped')] if game_data.get('Ripped') else "",
-                    "Copy Protection": [game_data.get('Copy Protection')] if game_data.get('Copy Protection') else "",
-                    "Playable": [game_data.get('Playable')] if game_data.get('Playable') else "",
-                    "Spawnable": [game_data.get('Spawnable')] if game_data.get('Spawnable') else "",
-                    "Force Feedback": [game_data.get('Force Feedback')] if game_data.get('Force Feedback') else "",
-                    "Dimension": [game_data.get('Dimension')] if game_data.get('Dimension') else "",
-                    "Time": [game_data.get('pacing')] if game_data.get('pacing') else "",
-                    "Perspective": [chosen_perspective] if game_data.get('perspective') else "",
-                    "Setting": [game_data.get('setting')] if game_data.get('setting') else "",
-                    "Genre": [game_data.get('genre')] if game_data.get('genre') else "",
-                    "Gameplay": [game_data.get('gameplay')] if game_data.get('gameplay') else ""
-                }
-            
-            # Re-order the columns based on the order in the settings
-            column_order = settings['column_order']
-            ordered_data = {key: data[key] for key in column_order if key in data}
+    populate_menu(editionframe, "editions", active_settings["editions"])
 
-            df = pd.DataFrame(ordered_data)
-            write_to_file(df, platforms[selected_platform_index])
-            logging.debug(f"Debug: Data written to file: {df}")
+    databaseframe = ttk.Frame(contextframe, padding="2")
+    databaseframe.grid(row=contextrow, column=0, sticky=tk.W+tk.E)
+    frames.append(databaseframe)
+    contextrow += 1
 
-            # Reset the game data, so we don't get the same data if the next barcode is invalid
-            selected_title_index = 0
-            selected_perspective_index = 0
-            barcode = ""
-            game_url = None
-            game_data = None
-        
-        if key == ord('n') and game_data != None:
-            selected_title_index = 0
-            selected_perspective_index = 0
-            barcode = ""
-            game_url = None
-            game_data = None
-            message = chosen_title + message_fail_str
-        
-        # Check if the selected platform index has changed and set defaults
-        if selected_platform_index != previous_platform_index:
-            previous_platform_index = selected_platform_index
-            platform = platforms[selected_platform_index]
-            if platform in settings['platform_defaults']:
-                selected_format_index = settings['platform_defaults'][platform]['selected_format_index']
-                selected_condition_index = settings['platform_defaults'][platform]['selected_condition_index']
-                selected_content_index = settings['platform_defaults'][platform]['selected_content_index']
-                selected_editions_index = settings['platform_defaults'][platform]['selected_editions_index']
-            elif "Default" in settings['platform_defaults']:
-                selected_format_index = settings['platform_defaults']['Default']['selected_format_index']
-                selected_condition_index = settings['platform_defaults']['Default']['selected_condition_index']
-                selected_content_index = settings['platform_defaults']['Default']['selected_content_index']
-                selected_editions_index = settings['platform_defaults']['Default']['selected_editions_index']
+    infoframe = ttk.LabelFrame(mainframe, text="Info", padding="2", relief=tk.SUNKEN)
+    infoframe.grid(row=mainrow, column=0, sticky="nsew")
+    frames_padded.append(infoframe)
+    mainrow += 1
 
+    update_info_frame()
 
+    logframe = ttk.LabelFrame(mainframe, text="Log", padding="2")
+    logframe.grid(row=mainrow, column=0, sticky="nsew")
+    frames_padded.append(logframe)
+    mainrow += 1
 
-            
+    # Add a scrollable tree view to the log frame with 5 rows visible at a time and 3 columns for Title, Platform, and Release Date
+    logtree = ttk.Treeview(logframe, columns=("Title", "Platform", "Release Date"), show="headings", height=5)
+    logtree.heading("Title", text="Title")
+    logtree.heading("Platform", text="Platform")
+    logtree.heading("Release Date", text="Release Date")
+    logtree.column("Title", width=200)
+    logtree.column("Platform", width=100)
+    logtree.column("Release Date", width=100)
+    logtree.grid(row=0, column=0, sticky="nsew")
+    logframe.rowconfigure(0, weight=1)
+    logframe.columnconfigure(0, weight=1)
 
-        
+    searchframe = ttk.LabelFrame(mainframe, text="Search", padding="2")
+    searchframe.grid(row=mainrow, column=0, sticky="ew")
+    searchframe.columnconfigure(1, weight=1)
+    frames_padded.append(searchframe)
+    mainrow += 1
 
-        
+    searchlabel = ttk.Label(searchframe, text="Barcode:")
+    searchlabel.grid(row=0, column=0, sticky=tk.W)
+    searchentry = ttk.Entry(searchframe, width=40)
+    searchentry.grid(row=0, column=1, sticky=tk.W+tk.E)
+    searchbutton = ttk.Button(searchframe, text="Search", command=lambda: search_game(searchentry.get()))
+    searchbutton.grid(row=0, column=2, sticky=tk.W)
 
+    acceptbutton = ttk.Button(searchframe, text="Accept", state="disabled", command=lambda: game_accept())
+    acceptbutton.grid(row=0, column=3, sticky=tk.W)
+    declinebutton = ttk.Button(searchframe, text="Decline", state="disabled", command=lambda: handle_error("Decline functionality not implemented yet."))
+    declinebutton.grid(row=0, column=4, sticky=tk.W)
 
-curses.wrapper(main)
+    # Invoke the Search button when Enter is pressed inside the entry
+    searchentry.bind('<Return>', lambda event: searchbutton.invoke())
+    # Make the search entry focused when the application starts
+    searchentry.focus()
+    def handle_accept_key(event):
+        if root.focus_get() != searchentry:
+            acceptbutton.invoke()
+
+    def handle_decline_key(event):
+        if root.focus_get() != searchentry:
+            declinebutton.invoke()
+
+    root.bind_all('<y>', handle_accept_key)
+    root.bind_all('<n>', handle_decline_key)
+    root.bind_all('<Y>', handle_accept_key)
+    root.bind_all('<N>', handle_decline_key)
+
+    for frame in frames_padded:
+        for child in frame.winfo_children():
+            child.grid_configure(padx=4, pady=4)
+
+    settings_set_defaults()
+    root.mainloop()
+
+if __name__ == "__main__":
+    settings_load()
+    main()
