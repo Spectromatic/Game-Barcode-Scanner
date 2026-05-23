@@ -23,7 +23,7 @@ active_title = None
 frames = []
 frames_padded = []
 infoframe = None
-searchframe = None
+searchentry = None
 logframe = None
 logtree = None
 
@@ -101,6 +101,8 @@ def game_accept():
     write_to_file(df, active_settings["platforms"][active_selections.get("platforms", tk.IntVar()).get()])
     game_log(selected_title, selected_platform, active_game_data.get('release_date', ''))
     game_clear()
+    game_search_clear()
+    game_search_focus()
 
 def game_clear():
     if infoframe is None:
@@ -116,18 +118,21 @@ def game_clear():
     active_title = None
     active_perspective = None
 
+def game_search_clear():
     # Focus the search entry
-    if searchframe is None:
+    if searchentry is None:
         return
-    for child in searchframe.winfo_children():
-        if isinstance(child, ttk.Entry):
-            # Clear the search entry
-            child.delete(0, tk.END)
-            child.focus()
-            break
+    searchentry.delete(0, tk.END)
+
+def game_search_focus():
+    # Focus the search entry
+    if searchentry is None:
+        return
+    searchentry.focus_set()
 
 def game_decline():
     game_clear()
+    game_search_focus()
 
 def game_log(title, platform, release_date):
     global logframe, logtree
@@ -151,16 +156,53 @@ def populate_menu(frame, name, options):
     label.pack(side=tk.LEFT, padx=4)
 
     max_length = max(len(option) for option in options)
-
     var = tk.IntVar(value=0)
-    var.trace_add("write", lambda *args: selections_update(name, var.get()))
     active_selections[name] = var
+    buttons = []
+
+    def on_change(*args):
+        idx = var.get()
+        for i, btn in enumerate(buttons):
+            btn.state(['pressed'] if i == idx else ['!pressed'])
+        selections_update(name, idx)
+
+    var.trace_add("write", on_change)
 
     for index, option in enumerate(options):
-        radio = tk.Radiobutton(frame, text=option, variable=var, value=index, indicatoron=False, width=max_length, anchor=tk.CENTER)
-        radio.pack(side=tk.LEFT)
-    
-    radio.config(command=lambda v=var: selections_update(name, v.get()))
+        btn = ttk.Button(frame, text=option, width=max_length, command=lambda i=index: var.set(i))
+        btn.config(padding=(0, 0))
+        btn.pack(side=tk.LEFT)
+        buttons.append(btn)
+
+    on_change()
+
+def populate_selections(frame, i, offset, current_selection, value, key, label_col, btn_col):
+    active_selection = tk.StringVar(value=current_selection if current_selection is not None and current_selection in value else value[0])
+    sel_buttons = []
+
+    for idx, t in enumerate(value):
+        if idx == 0:
+            row = i + offset
+        else:
+            offset += 1
+            row = i + offset
+            empty_label = ttk.Label(frame, text="", style=f"InfoData{'Even' if row % 2 == 0 else 'Odd'}.TLabel")
+            empty_label.grid(row=row, column=label_col, sticky="nsew")
+
+        def on_click(v=t, btns=sel_buttons):
+            update_info_choice(key, v)
+            for b, bv in btns:
+                b.state(['pressed'] if bv == v else ['!pressed'])
+
+        btn = ttk.Button(frame, text=handle_ellipsis(t), command=on_click)
+        btn.grid(row=row, column=btn_col, sticky="nsew")
+        btn.config(padding=(0, 0))
+        sel_buttons.append((btn, t))
+
+    for btn, val in sel_buttons:
+        btn.state(['pressed'] if val == active_selection.get() else ['!pressed'])
+
+    return active_selection, offset
 
 def scrape_data_moby_score(soup):
     moby_score = soup.find('div', class_='mobyscore')
@@ -551,19 +593,7 @@ def update_info_frame():
         data_label.grid(row=i + active_game_data_offset, column=0, sticky="nsew")
 
         if key and key.lower() == 'title' and len(value) > 1:
-
-            active_title = tk.StringVar(value=current_title if current_title is not None and current_title in value else value[0])
-            for idx, t in enumerate(value):
-                if idx == 0:
-                    row = i + active_game_data_offset
-                else:
-                    active_game_data_offset += 1
-                    row = i + active_game_data_offset
-                    empty_label = ttk.Label(infoframe, text="", style=f"InfoData{'Even' if row % 2 == 0 else 'Odd'}.TLabel")
-                    empty_label.grid(row=row, column=0, sticky="nsew")
-
-                rb = tk.Radiobutton(infoframe, text=handle_ellipsis(t), variable=active_title, value=t, anchor=tk.W, indicatoron=False, height=1, command=lambda k=key, v=t: update_info_choice(k, v))
-                rb.grid(row=row, column=1, sticky="nsew")
+            active_title, active_game_data_offset = populate_selections(infoframe, i, active_game_data_offset, current_title, value, 'title', 0, 1)
         else:
             value_label = ttk.Label(infoframe, text=handle_ellipsis(f"{value}"), style=f"InfoData{'Even' if (i + active_game_data_offset) % 2 == 0 else 'Odd'}.TLabel")
             value_label.grid(row=i + active_game_data_offset, column=1, sticky="nsew")
@@ -576,18 +606,7 @@ def update_info_frame():
         data_label.grid(row=j + active_taxonomy_offset, column=2, sticky="nsew")
 
         if key and key.lower() == 'perspective' and len(value) > 1:
-            active_perspective = tk.StringVar(value=current_perspective if current_perspective is not None and current_perspective in value else value[0])
-            for idx, p in enumerate(value):
-                if idx == 0:
-                    row = j + active_taxonomy_offset
-                else:
-                    active_taxonomy_offset += 1
-                    row = j + active_taxonomy_offset
-                    empty_label = ttk.Label(infoframe, text="", style=f"InfoData{'Even' if row % 2 == 0 else 'Odd'}.TLabel")
-                    empty_label.grid(row=row, column=2, sticky="nsew")
-
-                rb = tk.Radiobutton(infoframe, text=handle_ellipsis(p), variable=active_perspective, value=p, anchor=tk.W, indicatoron=False, height=1, command=lambda k=key, v=p: update_info_choice(k, v))
-                rb.grid(row=row, column=3, sticky="nsew")
+            active_perspective, active_taxonomy_offset = populate_selections(infoframe, j, active_taxonomy_offset, current_perspective, value, 'perspective', 2, 3)
         else:
             value_label = ttk.Label(infoframe, text=handle_ellipsis(f"{value}"), style=f"InfoData{'Even' if (j + active_taxonomy_offset) % 2 == 0 else 'Odd'}.TLabel")
             value_label.grid(row=j + active_taxonomy_offset, column=3, sticky="nsew")
@@ -654,7 +673,7 @@ def write_to_file(data, platform):
     return
 
 def main():
-    global infoframe, searchframe, logframe, logtree
+    global infoframe, searchentry, logframe, logtree
     if active_settings is None:
         handle_error("No settings available.")
         return
@@ -665,7 +684,8 @@ def main():
     root.rowconfigure(0, weight=1)
 
     style = ttk.Style(root)
-    style.theme_use('default')
+    if active_settings['toggles'].get('use_custom_ttk_theme', False):
+        style.theme_use(active_settings['theming'].get('ttk_theme', 'default'))
 
     mainrow = 0
     mainframe = ttk.Frame(root, padding="8")
@@ -750,7 +770,7 @@ def main():
     searchlabel.grid(row=0, column=0, sticky=tk.W)
     searchentry = ttk.Entry(searchframe, width=40)
     searchentry.grid(row=0, column=1, sticky=tk.W+tk.E)
-    searchbutton = ttk.Button(searchframe, text="Search", command=lambda: search_game(searchentry.get()))
+    searchbutton = ttk.Button(searchframe, text="Search", command=lambda: search_game(searchentry.get() if searchentry is not None else ""))
     searchbutton.grid(row=0, column=2, sticky=tk.W)
 
     acceptbutton = ttk.Button(searchframe, text="Accept", state="disabled", command=lambda: game_accept())
@@ -774,6 +794,7 @@ def main():
     root.bind_all('<n>', handle_decline_key)
     root.bind_all('<Y>', handle_accept_key)
     root.bind_all('<N>', handle_decline_key)
+    root.bind_all('<Control-q>', lambda event: root.quit())
 
     for frame in frames_padded:
         for child in frame.winfo_children():

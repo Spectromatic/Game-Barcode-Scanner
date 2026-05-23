@@ -175,6 +175,12 @@
         "use_xls_collate_sheets": true,
         "use_clipboard": true,
         "use_full_platform_name": false,
-        "use_content_split": true
+        "use_content_split": true,
+        "use_custom_ttk_theme": true,
+        "use_custom_colors": false
+    },
+    "theming": {
+        "ttk_theme": "clam",
+        "available_themes": ["clam", "alt", "default","classic"]
     }
 }
