@@ -6,12 +6,15 @@ Was mainly meant to work with a barcode scanner, but in case nothing is found, a
 
 # Requirements
 
-- Curses
 - Pandas
 - Beautiful Soup
 - Requests
 - Openpyxl
 - Pyperclip
+
+## Runtime Requirements
+
+- xclip, xdotool, wl-clipboard or similar
 
 # How to run
 
