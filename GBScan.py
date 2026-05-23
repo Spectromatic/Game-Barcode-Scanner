@@ -45,23 +45,25 @@ def game_accept():
     selected_contents = active_settings['contents'][active_selections.get("contents", tk.IntVar()).get()]
     
     # Move the "The" to the end if the title starts with "The " and it's enabled in settings
-    if selected_title.startswith("The ") and active_settings.get('use_the_suffix', True):
+    if selected_title.startswith("The ") and active_settings['toggles'].get('use_the_suffix', True):
         selected_title = selected_title[4:] + ", The"
     
+    contents = {}
+    
     # Set case, sleeve, and manual based on content
-    case = 'Y' if selected_contents not in ["No Case", "Manual Only", "Sleeve Only", "Loose Disc", "Loose Cartridge", "Nothing"] else 'N'
-    sleeve = 'Y' if selected_contents not in ["Case Only", "Manual Only", "No Sleeve", "Loose Disc", "Loose Cartridge", "Nothing"] else 'N'
-    manual = 'Y' if selected_contents not in ["Case Only", "No Manual", "Loose Disc", "Loose Cartridge", "Nothing"] else 'N'
+    if active_settings['toggles'].get('use_content_split'):
+        contents['Case'] = 'Y' if selected_contents not in ["No Case", "Manual Only", "Sleeve Only", "Loose Disc", "Loose Cartridge", "Nothing"] else 'N'
+        contents['Sleeve'] = 'Y' if selected_contents not in ["Case Only", "Manual Only", "No Sleeve", "Loose Disc", "Loose Cartridge", "Nothing"] else 'N'
+        contents['Manual'] = 'Y' if selected_contents not in ["Case Only", "No Manual", "Loose Disc", "Loose Cartridge", "Nothing"] else 'N'
+    else:
+        contents['Contents'] = selected_contents
 
     # Prepare the data to write to the file
     data = {
         "Title": [selected_title],
         "Release Date": [active_game_data.get('release_date')] if active_game_data.get('release_date') else "",
         "Platform": active_settings['platform_mapping'][active_settings['platforms'][active_selections.get("platforms", tk.IntVar()).get()]] if active_settings['toggles'].get('use_full_platform_name', False) else active_settings['platforms'][active_selections.get("platforms", tk.IntVar()).get()],
-        "Case": [case],
-        "Sleeve": [sleeve],
-        "Manual": [manual],
-        #"Content": contents[selected_content_index],
+        **contents,
         "Condition": active_settings['conditions'][active_selections.get("conditions", tk.IntVar()).get()],
         "Format": active_settings['formats'][active_selections.get("formats", tk.IntVar()).get()],
         "Edition": active_settings['editions'][active_selections.get("editions", tk.IntVar()).get()],
@@ -753,7 +755,7 @@ def main():
 
     acceptbutton = ttk.Button(searchframe, text="Accept", state="disabled", command=lambda: game_accept())
     acceptbutton.grid(row=0, column=3, sticky=tk.W)
-    declinebutton = ttk.Button(searchframe, text="Decline", state="disabled", command=lambda: handle_error("Decline functionality not implemented yet."))
+    declinebutton = ttk.Button(searchframe, text="Decline", state="disabled", command=lambda: game_decline())
     declinebutton.grid(row=0, column=4, sticky=tk.W)
 
     # Invoke the Search button when Enter is pressed inside the entry
