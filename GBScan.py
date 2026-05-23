@@ -6,10 +6,11 @@ import requests
 import bs4 as bs
 import pandas as pd
 import tkinter as tk
-from openpyxl import load_workbook
-from openpyxl.utils.dataframe import dataframe_to_rows
 from tkinter import ttk
 from tkinter import messagebox
+
+import sys
+BASE_DIR = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else os.path.dirname(__file__)
 
 active_game_data = {}
 active_perspective = None
@@ -48,9 +49,9 @@ def game_accept():
         selected_title = selected_title[4:] + ", The"
     
     # Set case, sleeve, and manual based on content
-    case = 'Y' if selected_contents not in ["No Case", "Sleeve Only", "Loose Disc", "Loose Cartridge", "Nothing"] else 'N'
-    sleeve = 'Y' if selected_contents not in ["No Sleeve", "Loose Disc", "Loose Cartridge", "Nothing"] else 'N'
-    manual = 'Y' if selected_contents not in ["No Manual", "Loose Disc", "Loose Cartridge", "Nothing"] else 'N'
+    case = 'Y' if selected_contents not in ["No Case", "Manual Only", "Sleeve Only", "Loose Disc", "Loose Cartridge", "Nothing"] else 'N'
+    sleeve = 'Y' if selected_contents not in ["Case Only", "Manual Only", "No Sleeve", "Loose Disc", "Loose Cartridge", "Nothing"] else 'N'
+    manual = 'Y' if selected_contents not in ["Case Only", "No Manual", "Loose Disc", "Loose Cartridge", "Nothing"] else 'N'
 
     # Prepare the data to write to the file
     data = {
@@ -443,7 +444,7 @@ def settings_load():
     # Load settings from the settings.json file
     global active_settings
     try:
-        with open("settings.json", "r") as f:
+        with open(os.path.join(BASE_DIR, "settings.json"), "r") as f:
             active_settings = json.load(f)
         print("Settings loaded successfully.")
     except Exception as e:
