@@ -24,8 +24,44 @@ frames = []
 frames_padded = []
 infoframe = None
 searchentry = None
+acceptbutton = None
 logframe = None
 logtree = None
+
+def button_focus_accept():
+    global acceptbutton
+    if acceptbutton is not None and acceptbutton.instate(['!disabled']):
+        acceptbutton.after_idle(acceptbutton.focus_set)
+
+def button_select_all(event=None):
+    global searchentry
+    if searchentry is None:
+        return "break"
+    
+    searchentry.focus_set()
+    searchentry.select_range(0, tk.END)
+    searchentry.icursor(tk.END)
+    return "break"
+
+def clear_infoframe():
+    global infoframe
+    if infoframe is None:
+        return
+    
+    # Clear the info frame
+    for widget in infoframe.winfo_children():
+        widget.destroy()
+    
+    if not active_game_data:
+        for i in range(6):
+            for j in range(3):
+                empty_label = ttk.Label(infoframe, text="", style=f"InfoData{'Even' if (i) % 2 == 0 else 'Odd'}.TLabel")
+                empty_label.grid(row=i, column=j*2, sticky="nsew")
+                empty_label = ttk.Label(infoframe, text="", style=f"InfoData{'Even' if (i) % 2 == 0 else 'Odd'}.TLabel")
+                empty_label.grid(row=i, column=j*2+1, sticky="nsew")
+                infoframe.columnconfigure(j*2, weight=1, uniform="info")
+                infoframe.columnconfigure(j*2+1, weight=1, uniform="info")
+        return
 
 def game_accept():
     if active_settings is None:
@@ -105,11 +141,6 @@ def game_accept():
     game_search_focus()
 
 def game_clear():
-    if infoframe is None:
-        return
-    for widget in infoframe.winfo_children():
-        widget.destroy()
-
     # Clear the active game data and reset the active title and perspective
     global active_game_data, active_taxonomy, active_physical_data, active_title, active_perspective
     active_game_data = {}
@@ -117,6 +148,8 @@ def game_clear():
     active_physical_data = {}
     active_title = None
     active_perspective = None
+
+    clear_infoframe()
 
 def game_search_clear():
     # Focus the search entry
@@ -140,7 +173,8 @@ def game_log(title, platform, release_date):
     if logframe is None or logtree is None:
         return
     
-    logtree.insert("", "end", values=(title, platform, release_date))
+    tag = 'even' if logtree.get_children() and len(logtree.get_children()) % 2 == 0 else 'odd'
+    logtree.insert("", "end", values=(title, platform, release_date), tags=(tag,))
     print(f"Debug: Logged game - Title: {title}, Platform: {platform}, Release Date: {release_date}")
 
 def handle_ellipsis(text, max_length=30):
@@ -469,6 +503,7 @@ def search_game(query):
     active_specs = scrape_moby_specs(url)
     update_button_states("normal")
     update_info_frame()
+    button_focus_accept()
 
 def selections_update(name, value):
     # Update the defaults based on the platform selection
@@ -553,18 +588,11 @@ def update_info_frame():
     if infoframe is None:
         return
     
-    # Clear the info frame
-    for widget in infoframe.winfo_children():
-        widget.destroy()
-
-    if not active_game_data:
-        for i in range(6):
-            for j in range(3):
-                empty_label = ttk.Label(infoframe, text="", style=f"InfoData{'Even' if (i + j) % 2 == 0 else 'Odd'}.TLabel")
-                empty_label.grid(row=i, column=j*2, sticky="nsew")
-                empty_label = ttk.Label(infoframe, text="", style=f"InfoData{'Even' if (i + j) % 2 == 0 else 'Odd'}.TLabel")
-                empty_label.grid(row=i, column=j*2+1, sticky="nsew")
+    if active_settings is None:
+        handle_error("Settings file is missing")
         return
+    
+    clear_infoframe()
     
     active_game_items = list(active_game_data.items())
     active_taxonomy_items = list(active_taxonomy.items())
@@ -574,10 +602,6 @@ def update_info_frame():
     extra_perspectives = max(len(active_taxonomy.get('perspective', [])) - 1, 0)
     max_extra = max(extra_titles, extra_perspectives)
     max_rows = max(len(active_game_items) + extra_titles, len(active_taxonomy_items) + extra_perspectives, len(active_physical_items))
-
-    style = ttk.Style()
-    style.configure("InfoDataEven.TLabel", background="#f8f8f8")
-    style.configure("InfoDataOdd.TLabel", background="#e8e8e8")
 
     current_title = active_title.get() if isinstance(active_title, tk.StringVar) else None
     current_perspective = active_perspective.get() if isinstance(active_perspective, tk.StringVar) else None
@@ -673,7 +697,7 @@ def write_to_file(data, platform):
     return
 
 def main():
-    global infoframe, searchentry, logframe, logtree
+    global infoframe, searchentry, logframe, logtree, acceptbutton
     if active_settings is None:
         handle_error("No settings available.")
         return
@@ -686,6 +710,10 @@ def main():
     style = ttk.Style(root)
     if active_settings['toggles'].get('use_custom_ttk_theme', False):
         style.theme_use(active_settings['theming'].get('ttk_theme', 'default'))
+    even_bg = active_settings["theming"]["custom_colors"]["row_even_bg"]
+    odd_bg = active_settings["theming"]["custom_colors"]["row_odd_bg"]
+    style.configure("InfoDataEven.TLabel", background=even_bg)
+    style.configure("InfoDataOdd.TLabel", background=odd_bg)
 
     mainrow = 0
     mainframe = ttk.Frame(root, padding="8")
@@ -757,6 +785,8 @@ def main():
     logtree.column("Platform", width=100)
     logtree.column("Release Date", width=100)
     logtree.grid(row=0, column=0, sticky="nsew")
+    logtree.tag_configure('even', background=even_bg)
+    logtree.tag_configure('odd', background=odd_bg)
     logframe.rowconfigure(0, weight=1)
     logframe.columnconfigure(0, weight=1)
 
@@ -783,7 +813,7 @@ def main():
     # Make the search entry focused when the application starts
     searchentry.focus()
     def handle_accept_key(event):
-        if root.focus_get() != searchentry:
+        if root.focus_get() != searchentry and acceptbutton is not None and acceptbutton['state'] == 'normal':
             acceptbutton.invoke()
 
     def handle_decline_key(event):
@@ -795,6 +825,8 @@ def main():
     root.bind_all('<Y>', handle_accept_key)
     root.bind_all('<N>', handle_decline_key)
     root.bind_all('<Control-q>', lambda event: root.quit())
+    if searchentry is not None:
+        root.bind_all('<Control-a>', button_select_all)
 
     for frame in frames_padded:
         for child in frame.winfo_children():

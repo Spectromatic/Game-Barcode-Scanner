@@ -181,6 +181,16 @@
     },
     "theming": {
         "ttk_theme": "clam",
-        "available_themes": ["clam", "alt", "default","classic"]
+        "available_themes": ["clam", "alt", "default","classic"],
+        "custom_colors": {
+            "background": "#f0f0f0",
+            "foreground": "#000000",
+            "button_background": "#e0e0e0",
+            "button_foreground": "#000000",
+            "entry_background": "#ffffff",
+            "entry_foreground": "#000000",
+            "row_even_bg": "#f8f8f8",
+            "row_odd_bg": "#e8e8e8"
+        }
     }
 }
