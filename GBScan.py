@@ -79,6 +79,7 @@ def game_accept():
     selected_title = active_title.get()
     selected_platform = active_settings['platforms'][active_selections.get("platforms", tk.IntVar()).get()]
     selected_contents = active_settings['contents'][active_selections.get("contents", tk.IntVar()).get()]
+    selected_format = active_settings['formats'][active_selections.get("formats", tk.IntVar()).get()]
     
     # Move the "The" to the end if the title starts with "The " and it's enabled in settings
     if selected_title.startswith("The ") and active_settings['toggles'].get('use_the_suffix', True):
@@ -101,7 +102,7 @@ def game_accept():
         "Platform": active_settings['platform_mapping'][active_settings['platforms'][active_selections.get("platforms", tk.IntVar()).get()]] if active_settings['toggles'].get('use_full_platform_name', False) else active_settings['platforms'][active_selections.get("platforms", tk.IntVar()).get()],
         **contents,
         "Condition": active_settings['conditions'][active_selections.get("conditions", tk.IntVar()).get()],
-        "Format": active_settings['formats'][active_selections.get("formats", tk.IntVar()).get()],
+        "Format": selected_format,
         "Edition": active_settings['editions'][active_selections.get("editions", tk.IntVar()).get()],
         "Developer": [active_game_data.get('developer')] if active_game_data.get('developer') else "",
         "Payed": [active_game_data.get('payed')] if active_game_data.get('payed') else "",
@@ -135,7 +136,7 @@ def game_accept():
     df = pd.DataFrame(ordered_data)
 
     write_to_file(df, active_settings["platforms"][active_selections.get("platforms", tk.IntVar()).get()])
-    game_log(selected_title, selected_platform, active_game_data.get('release_date', ''))
+    game_log(selected_title, selected_platform, active_game_data.get('release_date', ''), selected_format)
     game_clear()
     game_search_clear()
     game_search_focus()
@@ -167,15 +168,15 @@ def game_decline():
     game_clear()
     game_search_focus()
 
-def game_log(title, platform, release_date):
+def game_log(title, platform, release_date, format):
     global logframe, logtree
-
+    
     if logframe is None or logtree is None:
         return
     
     tag = 'even' if logtree.get_children() and len(logtree.get_children()) % 2 == 0 else 'odd'
-    logtree.insert("", "end", values=(title, platform, release_date), tags=(tag,))
-    print(f"Debug: Logged game - Title: {title}, Platform: {platform}, Release Date: {release_date}")
+    logtree.insert("", "end", values=(title, release_date, platform, format), tags=(tag,))
+    print(f"Debug: Logged game - Title: {title}, Platform: {platform}, Release Date: {release_date}, Format: {format}")
 
 def handle_ellipsis(text, max_length=30):
     return text if len(text) <= max_length else text[:max_length-3] + "..."
@@ -777,13 +778,15 @@ def main():
     mainrow += 1
 
     # Add a scrollable tree view to the log frame with 5 rows visible at a time and 3 columns for Title, Platform, and Release Date
-    logtree = ttk.Treeview(logframe, columns=("Title", "Platform", "Release Date"), show="headings", height=5)
+    logtree = ttk.Treeview(logframe, columns=("Title", "Release Date", "Platform", "Format"), show="headings", height=5)
     logtree.heading("Title", text="Title")
     logtree.heading("Platform", text="Platform")
     logtree.heading("Release Date", text="Release Date")
+    logtree.heading("Format", text="Format")
     logtree.column("Title", width=200)
-    logtree.column("Platform", width=100)
-    logtree.column("Release Date", width=100)
+    logtree.column("Release Date", width=50)
+    logtree.column("Platform", width=50)
+    logtree.column("Format", width=50)
     logtree.grid(row=0, column=0, sticky="nsew")
     logtree.tag_configure('even', background=even_bg)
     logtree.tag_configure('odd', background=odd_bg)
