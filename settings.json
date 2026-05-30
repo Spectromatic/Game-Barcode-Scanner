@@ -186,7 +186,8 @@
         "use_full_platform_name": false,
         "use_content_split": true,
         "use_custom_ttk_theme": true,
-        "use_custom_colors": false
+        "use_custom_colors": false,
+        "use_dx_point_drop": true
     },
     "theming": {
         "ttk_theme": "clam",

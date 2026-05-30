@@ -467,8 +467,11 @@ def scrape_moby_specs(game_url):
         dx_version = dx_spec.find_next_sibling('td').text.strip()
         #Strip everything that isn't or anything after the version number
         dx_version = re.search(r'\d+(\.\d+)?[a-zA-Z]*$', dx_version)
-        if dx_version is not None:
-            dx_version = dx_version.group()
+        dx_version = dx_version.group() if dx_version else None
+
+        if dx_version and active_settings and active_settings.get("toggles", {}).get("use_dx_point_drop", False):
+            dx_version = re.sub(r'\..*$', '', dx_version)
+
         print(f"Debug: DirectX Version: {dx_version}")
         os_found_dict['DX'] = 'DX' + dx_version if dx_version else 'Unknown'
 
