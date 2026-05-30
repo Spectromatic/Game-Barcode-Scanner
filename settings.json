@@ -51,7 +51,7 @@
     "case_conditions": [
         "OK", 
         "Cracked", 
-        "Broken"
+        "Opens Badly"
     ],
     "contents": [
         "CIB", 
@@ -83,6 +83,7 @@
         "Manual", 
         "Contents",
         "Condition", 
+        "Case Condition",
         "Format", 
         "Edition", 
         "Developer", 
@@ -110,48 +111,56 @@
         "Genre", 
         "Gameplay"],
     "columns_to_drop": {
-        "NOT_PC": ["DX", "DOS", "3.1", "95", "98", "ME", "2000", "XP", "Vista", "Win7", "Win8", "Win10", "Copy Protection", "Spawnable", "Force Feedback"]
+        "NOT_PC": ["DX", "DOS", "3.1", "95", "98", "ME", "2000", "XP", "Vista", "Win7", "Win8", "Win10", "Copy Protection", "Spawnable", "Force Feedback"],
+        "PC": ["Case Condition"]
     },
     "platform_defaults": {
         "PS1": {
             "formats": 0,
             "conditions": 4,
+            "case_conditions": 0,
             "contents": 0,
             "editions": 0
         },
         "Switch": {
             "formats": 6,
             "conditions": 8,
+            "case_conditions": 0,
             "contents": 1,
             "editions": 0
         },
         "DS": {
             "formats": 6,
             "conditions": 8,
+            "case_conditions": 0,
             "contents": 0,
             "editions": 0
         },
         "3DS": {
             "formats": 6,
             "conditions": 8,
+            "case_conditions": 0,
             "contents": 0,
             "editions": 0
         },
         "GB": {
             "formats": 6,
             "conditions": 8,
+            "case_conditions": 0,
             "contents": 7,
             "editions": 0
         },
         "PSP": {
             "formats": 6,
             "conditions": 1,
+            "case_conditions": 0,
             "contents": 0,
             "editions": 0
         },
         "Default": {
             "formats": 1,
             "conditions": 3,
+            "case_conditions": 0,
             "contents": 0,
             "editions": 0
         }

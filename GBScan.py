@@ -185,9 +185,20 @@ def handle_error(message):
     # Display the error message in a message box
     messagebox.showerror("Error", message)
 
+def handle_single_option(options):
+    # Handle the case where there is only one option available
+    if not options:
+        return ""
+    if not isinstance(options, list):
+        return str(options)
+    if len(options) == 1:
+        return str(options[0])
+    # If it's not a single option, just return the list back
+    return ", ".join(str(x) for x in options)
+
 def populate_menu(frame, name, options):
     # Populate a menu with the given options
-    label = ttk.Label(frame, text=name.capitalize(), width=12, anchor=tk.W)
+    label = ttk.Label(frame, text=name.capitalize(), width=15, anchor=tk.W)
     label.pack(side=tk.LEFT, padx=4)
 
     max_length = max(len(option) for option in options)
@@ -238,6 +249,46 @@ def populate_selections(frame, i, offset, current_selection, value, key, label_c
         btn.state(['pressed'] if val == active_selection.get() else ['!pressed'])
 
     return active_selection, offset
+
+def recall_log_item(event=None):
+    global logtree, active_settings
+    if logtree is None:
+        return
+
+    row_id = logtree.identify_row(event.y) if event is not None else None
+    if not row_id:
+        return
+
+    vals = logtree.item(row_id, "values")
+    if not vals:
+        return
+    title = vals[0] if len(vals) > 0 else ""
+    platform = vals[2] if len(vals) > 2 else ""
+
+    if active_settings is None:
+        handle_error("Settings file is missing")
+        return
+
+    toggles = active_settings.get("toggles", {})
+    use_xls = toggles.get("use_xls", False)
+    xls_collate = toggles.get("use_xls_collate_sheets", False)
+
+    if use_xls:
+        file_name = "scanned_collection.xlsx" if xls_collate else f"{platform}_scanned_collection.xlsx"
+        df = pd.read_excel(file_name, sheet_name=platform, engine="openpyxl", dtype=str)
+    else:
+        file_name = f"{platform}_scanned_collection.csv"
+        df = pd.read_csv(file_name, sep="\t", dtype=str)
+
+    title_col = next((c for c in df.columns if c.lower() == "title"), df.columns[0])
+
+    # Choose the last matching row
+    selected_row = df[df[title_col] == title].tail(1)
+    clipboard_data = selected_row.to_csv(sep="\t", index=False, header=False)
+
+    pyperclip.copy(clipboard_data)
+
+    messagebox.showinfo("Recalled", f"Copied latest matching row for '{title}' to clipboard from {file_name}")
 
 def scrape_data_moby_score(soup):
     moby_score = soup.find('div', class_='mobyscore')
@@ -362,6 +413,7 @@ def scrape_game_data(game_url):
 
     active_physical_data['format'] = active_settings["formats"][active_selections.get("formats", tk.IntVar()).get()]
     active_physical_data['condition'] = active_settings["conditions"][active_selections.get("conditions", tk.IntVar()).get()]
+    active_physical_data['case_condition'] = active_settings["case_conditions"][active_selections.get("case_conditions", tk.IntVar()).get()]
     active_physical_data['content'] = active_settings["contents"][active_selections.get("contents", tk.IntVar()).get()]
     active_physical_data['edition'] = active_settings["editions"][active_selections.get("editions", tk.IntVar()).get()]
 
@@ -613,13 +665,13 @@ def update_info_frame():
     for i in range(max_rows - extra_titles):
         key, value = active_game_items[i] if i < len(active_game_items) else ("", "")
         suffix = ":" if key else ""
-        data_label = ttk.Label(infoframe, text=handle_ellipsis(f"{key.capitalize()}{suffix}"), style=f"InfoData{'Even' if (i + active_game_data_offset) % 2 == 0 else 'Odd'}.TLabel")
+        data_label = ttk.Label(infoframe, text=handle_ellipsis(handle_single_option(f"{key.capitalize()}{suffix}")), style=f"InfoData{'Even' if (i + active_game_data_offset) % 2 == 0 else 'Odd'}.TLabel")
         data_label.grid(row=i + active_game_data_offset, column=0, sticky="nsew")
 
         if key and key.lower() == 'title' and len(value) > 1:
             active_title, active_game_data_offset = populate_selections(infoframe, i, active_game_data_offset, current_title, value, 'title', 0, 1)
         else:
-            value_label = ttk.Label(infoframe, text=handle_ellipsis(f"{value}"), style=f"InfoData{'Even' if (i + active_game_data_offset) % 2 == 0 else 'Odd'}.TLabel")
+            value_label = ttk.Label(infoframe, text=handle_ellipsis(handle_single_option(value)), style=f"InfoData{'Even' if (i + active_game_data_offset) % 2 == 0 else 'Odd'}.TLabel")
             value_label.grid(row=i + active_game_data_offset, column=1, sticky="nsew")
 
     # Update the info frame with the current taxonomy data
@@ -632,7 +684,7 @@ def update_info_frame():
         if key and key.lower() == 'perspective' and len(value) > 1:
             active_perspective, active_taxonomy_offset = populate_selections(infoframe, j, active_taxonomy_offset, current_perspective, value, 'perspective', 2, 3)
         else:
-            value_label = ttk.Label(infoframe, text=handle_ellipsis(f"{value}"), style=f"InfoData{'Even' if (j + active_taxonomy_offset) % 2 == 0 else 'Odd'}.TLabel")
+            value_label = ttk.Label(infoframe, text=handle_ellipsis(handle_single_option(value)), style=f"InfoData{'Even' if (j + active_taxonomy_offset) % 2 == 0 else 'Odd'}.TLabel")
             value_label.grid(row=j + active_taxonomy_offset, column=3, sticky="nsew")
 
     # Update the info frame with the current physical data
@@ -745,6 +797,13 @@ def main():
 
     populate_menu(conditionframe, "conditions", active_settings["conditions"])
 
+    caseconditionframe = ttk.Frame(contextframe, padding="2")
+    caseconditionframe.grid(row=contextrow, column=0, sticky=tk.W+tk.E)
+    frames.append(caseconditionframe)
+    contextrow += 1
+
+    populate_menu(caseconditionframe, "case_conditions", active_settings["case_conditions"])
+
     contentframe = ttk.Frame(contextframe, padding="2")
     contentframe.grid(row=contextrow, column=0, sticky=tk.W+tk.E)
     frames.append(contentframe)
@@ -819,9 +878,10 @@ def main():
             acceptbutton.invoke()
 
     def handle_decline_key(event):
-        if root.focus_get() != searchentry:
+        if root.focus_get() != searchentry and declinebutton is not None and declinebutton['state'] == 'normal':
             declinebutton.invoke()
 
+    logtree.bind("<Double-1>", recall_log_item)
     root.bind_all('<y>', handle_accept_key)
     root.bind_all('<n>', handle_decline_key)
     root.bind_all('<Y>', handle_accept_key)
