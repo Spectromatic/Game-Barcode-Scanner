@@ -174,7 +174,7 @@ def game_log(title, platform, release_date, format):
     if logframe is None or logtree is None:
         return
     
-    tag = 'even' if logtree.get_children() and len(logtree.get_children()) % 2 == 0 else 'odd'
+    tag = 'even' if len(logtree.get_children()) % 2 == 0 else 'odd'
     logtree.insert("", "end", values=(title, release_date, platform, format), tags=(tag,))
     print(f"Debug: Logged game - Title: {title}, Platform: {platform}, Release Date: {release_date}, Format: {format}")
 
@@ -601,7 +601,6 @@ def update_info_frame():
 
     extra_titles = max(len(active_game_data.get('title', [])) - 1, 0)
     extra_perspectives = max(len(active_taxonomy.get('perspective', [])) - 1, 0)
-    max_extra = max(extra_titles, extra_perspectives)
     max_rows = max(len(active_game_items) + extra_titles, len(active_taxonomy_items) + extra_perspectives, len(active_physical_items))
 
     current_title = active_title.get() if isinstance(active_title, tk.StringVar) else None
@@ -611,7 +610,7 @@ def update_info_frame():
     active_taxonomy_offset = 0
     active_physical_data_offset = 0
     # Update the info frame with the current game data
-    for i in range(max_rows - len(active_game_data.get('title', []))):
+    for i in range(max_rows - extra_titles):
         key, value = active_game_items[i] if i < len(active_game_items) else ("", "")
         suffix = ":" if key else ""
         data_label = ttk.Label(infoframe, text=handle_ellipsis(f"{key.capitalize()}{suffix}"), style=f"InfoData{'Even' if (i + active_game_data_offset) % 2 == 0 else 'Odd'}.TLabel")
@@ -624,7 +623,7 @@ def update_info_frame():
             value_label.grid(row=i + active_game_data_offset, column=1, sticky="nsew")
 
     # Update the info frame with the current taxonomy data
-    for j in range(max_rows - len(active_taxonomy.get('perspective', []))):
+    for j in range(max_rows - extra_perspectives):
         key, value = active_taxonomy_items[j] if j < len(active_taxonomy_items) else ("", "")
         suffix = ":" if key else ""
         data_label = ttk.Label(infoframe, text=handle_ellipsis(f"{key.capitalize()}{suffix}"), style=f"InfoData{'Even' if (j + active_taxonomy_offset) % 2 == 0 else 'Odd'}.TLabel")
@@ -637,7 +636,7 @@ def update_info_frame():
             value_label.grid(row=j + active_taxonomy_offset, column=3, sticky="nsew")
 
     # Update the info frame with the current physical data
-    for k in range(max_rows - max_extra):
+    for k in range(max_rows):
         key, value = active_physical_items[k] if k < len(active_physical_items) else ("", "")
         suffix = ":" if key else ""
         data_label = ttk.Label(infoframe, text=handle_ellipsis(f"{key.capitalize()}{suffix}"), style=f"InfoData{'Even' if (k + active_physical_data_offset) % 2 == 0 else 'Odd'}.TLabel")
