@@ -88,7 +88,7 @@ def game_accept():
     contents = {}
     
     # Set case, sleeve, and manual based on content
-    if active_settings['toggles'].get('use_content_split'):
+    if active_settings.get('toggles', {}).get('use_content_split', False):
         contents['Case'] = 'Y' if selected_contents not in ["No Case", "Manual Only", "Sleeve Only", "Loose Disc", "Loose Cartridge", "Nothing"] else 'N'
         contents['Sleeve'] = 'Y' if selected_contents not in ["Case Only", "Manual Only", "No Sleeve", "Loose Disc", "Loose Cartridge", "Nothing"] else 'N'
         contents['Manual'] = 'Y' if selected_contents not in ["Case Only", "No Manual", "Loose Disc", "Loose Cartridge", "Nothing"] else 'N'
@@ -102,6 +102,7 @@ def game_accept():
         "Platform": active_settings['platform_mapping'][active_settings['platforms'][active_selections.get("platforms", tk.IntVar()).get()]] if active_settings['toggles'].get('use_full_platform_name', False) else active_settings['platforms'][active_selections.get("platforms", tk.IntVar()).get()],
         **contents,
         "Condition": active_settings['conditions'][active_selections.get("conditions", tk.IntVar()).get()],
+        "Case Condition": active_settings['case_conditions'][active_selections.get("case_conditions", tk.IntVar()).get()],
         "Format": selected_format,
         "Edition": active_settings['editions'][active_selections.get("editions", tk.IntVar()).get()],
         "Developer": [active_game_data.get('developer')] if active_game_data.get('developer') else "",
@@ -127,7 +128,8 @@ def game_accept():
         "Perspective": [active_perspective.get()] if isinstance(active_perspective, tk.StringVar) else [str(active_perspective)] if str(active_perspective) else "",
         "Setting": [active_taxonomy.get('setting')] if active_taxonomy.get('setting') else "",
         "Genre": [active_taxonomy.get('genre')] if active_taxonomy.get('genre') else "",
-        "Gameplay": [active_taxonomy.get('gameplay')] if active_taxonomy.get('gameplay') else ""
+        "Gameplay": [active_taxonomy.get('gameplay')] if active_taxonomy.get('gameplay') else "",
+        "Added": [pd.Timestamp.now().strftime("%Y-%m-%d")]
     }
     
     # Re-order the columns based on the order in the settings
@@ -718,51 +720,81 @@ def update_info_frame():
     for row in range(rows):
         infoframe.rowconfigure(row, weight=1, minsize=20)
 
+def write_new_headers(data, existing_data):
+    desired_order_cols = []
+    if active_settings and isinstance(active_settings, dict):
+        desired_order_cols = [c for c in (active_settings.get('column_order') or []) if isinstance(c, str)]
+
+    existing_cols = list(existing_data.columns) if existing_data is not None and not existing_data.empty else []
+    # Build a full column list that starts with the desired order from settings, 
+    # then adds any existing columns that aren't in the desired order, 
+    # and finally adds any new columns from the data that aren't in either of those lists
+    full_columns = []
+    for col in desired_order_cols:
+        if col not in full_columns:
+            full_columns.append(col)
+    for col in existing_cols:
+        if col not in full_columns:
+            full_columns.append(col)
+    for col in data.columns:
+        if col not in full_columns:
+            full_columns.append(col)
+    if not full_columns:
+        full_columns = list(data.columns)
+
+    # Reindex existing and new data to the full column set, filling missing cells with empty strings
+    existing_reindexed = existing_data.reindex(columns=full_columns, fill_value="") if not existing_data.empty else pd.DataFrame(columns=full_columns)
+    new_reindexed = data.reindex(columns=full_columns, fill_value="")
+
+    # Combine and write back so header contains all columns
+    combined = pd.concat([existing_reindexed, new_reindexed], ignore_index=True)
+
+    return combined, new_reindexed
+
 def write_to_file(data, platform):
     # Load settings
-    with open('settings.json', 'r') as f:
-        settings = json.load(f)
+    if active_settings is None:
+        return
 
     file_name = f"{platform}_scanned_collection.csv"
-    xls_format = settings['toggles'].get('use_xls', False)
-    xls_collate = settings['toggles'].get('use_xls_collate_sheets', False)
-    clipboard = settings['toggles'].get('use_clipboard', True)
-
     # Toggle whether to write xls to a single file with tabs or separate files
-    if xls_format:
-        file_name = f"{platform}_scanned_collection.xlsx"
-        if xls_collate:
-            file_name = "scanned_collection.xlsx"
+    if active_settings['toggles'].get('use_xls', False):
+        file_name = f"{platform}_scanned_collection.xlsx" if not active_settings['toggles'].get('use_xls_collate_sheets', False) else "scanned_collection.xlsx"
+    clipboard = active_settings['toggles'].get('use_clipboard', True)
+
+    file_exists = os.path.isfile(file_name) 
+    existing = pd.read_excel(file_name, sheet_name=platform, engine='openpyxl', dtype=str) if file_exists and active_settings['toggles'].get('use_xls', False) else pd.read_csv(file_name, sep='\t', dtype=str) if file_exists else pd.DataFrame()
+    combined, new_reindexed = write_new_headers(data, existing)
+
+    use_split = active_settings.get('toggles', {}).get('use_content_split', False)
+    if use_split:
+        combined = combined.drop(columns=['Contents'], errors='ignore')
+        new_reindexed = new_reindexed.drop(columns=['Contents'], errors='ignore')
+    else:
+        drop_content_cols = ['Case', 'Sleeve', 'Manual']
+        for col in drop_content_cols:
+            combined = combined.drop(columns=[col], errors='ignore')
+        new_reindexed = new_reindexed.drop(columns=[col for col in drop_content_cols if col in new_reindexed.columns], errors='ignore')
 
     # Determine columns to drop
     # Drop the specified columns, or the columns that don't match the platform
     drop_columns = []
-    for key, columns in settings['columns_to_drop'].items():
+    for key, columns in (active_settings.get('columns_to_drop') or {}).items():
         if key == platform or (key.startswith('NOT_') and key[4:] != platform):
             # Drop the specified columns, but only if they exist in the DataFrame
-            drop_columns.extend([col for col in columns if col in data.columns])
+            drop_columns.extend([col for col in (columns or []) if col in combined.columns])
+    combined = combined.drop(columns=drop_columns, errors='ignore')  
+    new_reindexed = new_reindexed.drop(columns=drop_columns, errors='ignore')
 
-    # Drop columns
-    data = data.drop(columns=drop_columns, errors='ignore')  
-    file_exists = os.path.isfile(file_name) 
-    mode = 'a' if file_exists else 'w' 
-
-    # Write the DataFrame to a CSV file with tab-separated fields
-    if xls_format and file_exists: 
-        with pd.ExcelWriter(file_name, mode='a', engine='openpyxl', if_sheet_exists='overlay') as writer:
-            start_row = writer.sheets[platform].max_row if platform in writer.sheets else 0
-            data.to_excel(writer, sheet_name=platform, index=False, header=not file_exists, startrow=start_row)
-    elif xls_format and not file_exists:
-        with pd.ExcelWriter(file_name, mode='w', engine='openpyxl') as writer:
-            data.to_excel(writer, sheet_name=platform, index=False, header=True)
+    # Overwrite file with combined to keep header in sync
+    if active_settings['toggles'].get('use_xls', False):
+        with pd.ExcelWriter(file_name, engine='openpyxl', mode='w') as writer:
+            combined.to_excel(writer, sheet_name=platform, index=False)
     else:
-        data.to_csv(file_name, mode=mode, sep='\t', index=False, header=not file_exists)
-        
-    if clipboard:
-        clipboard_data = data.to_csv(sep='\t', index=False, header=False)
-        pyperclip.copy(clipboard_data)
+        combined.to_csv(file_name, sep='\t', index=False)
 
-    return
+    if clipboard:
+        pyperclip.copy(new_reindexed.to_csv(sep='\t', index=False, header=False))
 
 def main():
     global infoframe, searchentry, logframe, logtree, acceptbutton
