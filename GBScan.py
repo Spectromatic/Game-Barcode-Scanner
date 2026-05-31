@@ -422,47 +422,45 @@ def scrape_game_data(game_url):
     print(f"Debug: Physical Data: {active_physical_data}")
     return active_game_data
 
-def scrape_moby_specs(game_url):
-    game_url = f"{game_url}/specs"
-    response = requests.get(game_url)
-    soup = bs.BeautifulSoup(response.text, 'html.parser')
-
-    os_found_dict = {}
+def scrape_min_os(soup, dict={}):
+    os_spec = soup.find('td', string='Minimum OS Class Required:')
+    
+    if os_spec is None:
+        print("Debug: Minimum OS Class not found.")
+        return None
 
     # List of operating systems
     os_to_check = ['DOS', '3.1', '95', '98', 'ME', '2000', 'XP', 'Vista', '7', '8', '10']
-    
-    specs = soup.find('table', class_='table table-nowrap text-sm')
-
-    if specs is None:
-        print("Debug: No specs table found.")
-        return None
-
-    os_spec = soup.find('td', string='Minimum OS Class Required:')
-    print(f"Debug: Found OS: {os_spec}")
 
     os_list = []
-    if os_spec:
-        os_version = os_spec.find_next_sibling('td').text.strip()
-        os_version = os_version.replace('Windows ', '')
-        print(f"Debug: Found OS Version: {os_version}")
-        os_list.append(os_version)
-        
-        # Create a list with each OS and 'Y' or 'N' depending on whether it was found
-        # Any OS later will be set to TBD
-        found_y = False
-        for os in os_to_check:
-            if os not in os_list and not found_y:
-                os_found_dict[os] = 'N'
-                continue
-            if not found_y:
-                os_found_dict[os] = 'Y'
-                found_y = True
-                continue
-            os_found_dict[os] = 'TBD'
 
+    os_version = os_spec.find_next_sibling('td').text.strip()
+    os_version = os_version.replace('Windows ', '')
+    print(f"Debug: Found OS Version: {os_version}")
+    os_list.append(os_version)
+    
+    # Create a list with each OS and 'Y' or 'N' depending on whether it was found
+    # Any OS later will be set to TBD
+    found_y = False
+    for os in os_to_check:
+        if os not in os_list and not found_y:
+            dict[os] = 'N'
+            continue
+        if not found_y:
+            dict[os] = 'Y'
+            found_y = True
+            continue
+        dict[os] = 'TBD'
+
+    return dict
+
+def scrape_dx(specs, dict={}):
     dx_spec = specs.find('td', string='Minimum DirectX Version Required:')
-    print(f"Debug: Found DirectX: {dx_spec}")
+
+    if dx_spec is None:
+        print("Debug: Minimum DirectX Version not found.")
+        return None
+
     if dx_spec:
         dx_version = dx_spec.find_next_sibling('td').text.strip()
         #Strip everything that isn't or anything after the version number
@@ -473,12 +471,27 @@ def scrape_moby_specs(game_url):
             dx_version = re.sub(r'\..*$', '', dx_version)
 
         print(f"Debug: DirectX Version: {dx_version}")
-        os_found_dict['DX'] = 'DX' + dx_version if dx_version else 'Unknown'
+        dict['DX'] = 'DX' + dx_version if dx_version else 'Unknown'
 
-    if os_found_dict is not None:
-        print(f"Debug: OS Found List: {os_found_dict}")
+def scrape_specs(game_url):
+    game_url = f"{game_url}/specs"
+    response = requests.get(game_url)
+    soup = bs.BeautifulSoup(response.text, 'html.parser')
+    
+    specs = soup.find('table', class_='table table-nowrap text-sm')
 
-    return os_found_dict
+    if specs is None:
+        print("Debug: No specs table found.")
+        return None
+
+    scraped_specs = {}
+    scraped_specs = scrape_min_os(specs, scraped_specs) or scraped_specs
+    scraped_specs = scrape_dx(specs, scraped_specs) or scraped_specs
+
+    if scraped_specs is not None:
+        print(f"Debug: Specs: {scraped_specs}")
+
+    return scraped_specs
 
 def scrape_for_dt(soup, text):
     element = soup.find('dt', string=text)
@@ -556,7 +569,7 @@ def search_game(query):
     if active_game_data is None:
         handle_error("Failed to scrape game data.")
         return None
-    active_specs = scrape_moby_specs(url)
+    active_specs = scrape_specs(url)
     update_button_states("normal")
     update_info_frame()
     button_focus_accept()
