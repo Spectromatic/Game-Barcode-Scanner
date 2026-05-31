@@ -110,10 +110,10 @@
         "Setting", 
         "Genre", 
         "Gameplay",
-        "Added"],
+        "Added",
+        "UPC"],
     "columns_to_drop": {
-        "NOT_PC": ["DX", "DOS", "3.1", "95", "98", "ME", "2000", "XP", "Vista", "Win7", "Win8", "Win10", "Copy Protection", "Spawnable", "Force Feedback"],
-        "PC": ["Case Condition"]
+        "NOT_PC": ["DX", "DOS", "3.1", "95", "98", "ME", "2000", "XP", "Vista", "Win7", "Win8", "Win10", "Copy Protection", "Spawnable", "Force Feedback"]
     },
     "platform_defaults": {
         "PS1": {

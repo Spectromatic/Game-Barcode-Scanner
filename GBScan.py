@@ -129,7 +129,8 @@ def game_accept():
         "Setting": [active_taxonomy.get('setting')] if active_taxonomy.get('setting') else "",
         "Genre": [active_taxonomy.get('genre')] if active_taxonomy.get('genre') else "",
         "Gameplay": [active_taxonomy.get('gameplay')] if active_taxonomy.get('gameplay') else "",
-        "Added": [pd.Timestamp.now().strftime("%Y-%m-%d")]
+        "Added": [pd.Timestamp.now().strftime("%Y-%m-%d")],
+        "UPC": [active_physical_data.get('upc')] if active_physical_data.get('upc') else ""
     }
     
     # Re-order the columns based on the order in the settings
@@ -197,6 +198,10 @@ def handle_single_option(options):
         return str(options[0])
     # If it's not a single option, just return the list back
     return ", ".join(str(x) for x in options)
+
+def is_upc(text: str) -> bool:
+    # Check if the text is a 13 digit UPC
+    return bool(re.fullmatch(r'\d{13}', text))
 
 def populate_menu(frame, name, options):
     # Populate a menu with the given options
@@ -571,6 +576,8 @@ def search_game(query):
     if active_game_data is None:
         handle_error("Failed to scrape game data.")
         return None
+    if is_upc(query):
+        active_physical_data['upc'] = query
     active_specs = scrape_specs(url)
     update_button_states("normal")
     update_info_frame()
