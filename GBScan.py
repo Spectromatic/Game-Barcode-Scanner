@@ -200,8 +200,8 @@ def handle_single_option(options):
     return ", ".join(str(x) for x in options)
 
 def is_upc(text: str) -> bool:
-    # Check if the text is a 13 digit UPC
-    return bool(re.fullmatch(r'\d{13}', text))
+    # Check if the text is a 12 or 13 digit UPC
+    return bool(re.fullmatch(r'\d{13}', text) or re.fullmatch(r'\d{12}', text))
 
 def populate_menu(frame, name, options):
     # Populate a menu with the given options
