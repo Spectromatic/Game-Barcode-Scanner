@@ -209,5 +209,13 @@
             "row_even_bg": "#f8f8f8",
             "row_odd_bg": "#e8e8e8"
         }
+    },
+    "shortcuts": {
+        "platforms": "F1",
+        "formats": "F2",
+        "conditions": "F3",
+        "case_conditions": "F4",
+        "contents": "F5",
+        "editions": "F6"
     }
 }

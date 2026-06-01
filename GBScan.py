@@ -63,6 +63,24 @@ def clear_infoframe():
                 infoframe.columnconfigure(j*2+1, weight=1, uniform="info")
         return
 
+def cycle_selection(name, direction=1):
+    if active_settings is None:
+        return
+    var = active_selections.get(name)
+    if not isinstance(var, tk.IntVar):
+        return
+    options = active_settings.get(name, [])
+    if not options:
+        return
+    var.set((var.get() + direction) % len(options))
+
+def cycle_setup(name, direction):
+    def handler(event):
+        cycle_selection(name, direction)
+        if searchentry is not None:
+            searchentry.focus_set()
+    return handler
+
 def game_accept():
     if active_settings is None:
         handle_error("No settings available.")
@@ -205,10 +223,18 @@ def is_upc(text: str) -> bool:
 
 def populate_menu(frame, name, options):
     # Populate a menu with the given options
-    label = ttk.Label(frame, text=name.capitalize(), width=15, anchor=tk.W)
-    label.pack(side=tk.LEFT, padx=4)
+    label_text = name.capitalize().replace("_", " ")
+    if active_settings is None:
+        return
+    shortcut = active_settings.get("shortcuts", {}).get(name)
+    if shortcut:
+        label_text += f" ({shortcut})"
 
     max_length = max(len(option) for option in options)
+    label_width = max(20, len(label_text))
+    label = ttk.Label(frame, text=label_text, width=label_width, anchor=tk.W)
+    label.pack(side=tk.LEFT, padx=4)
+    
     var = tk.IntVar(value=0)
     active_selections[name] = var
     buttons = []
@@ -944,6 +970,13 @@ def main():
     root.bind_all('<Control-q>', lambda event: root.quit())
     if searchentry is not None:
         root.bind_all('<Control-a>', button_select_all)
+
+    # Get the shortcuts and bind them, with and without shift if applicable
+    shortcuts = active_settings.get("shortcuts", {}) if active_settings else {}
+    for name, key in shortcuts.items():
+        root.bind_all(f"<{key}>", cycle_setup(name, 1))
+        if not key.startswith("shift-"):
+            root.bind_all(f"<Shift-{key}>", cycle_setup(name, -1))
 
     for frame in frames_padded:
         for child in frame.winfo_children():
