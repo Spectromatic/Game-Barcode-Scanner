@@ -25,4 +25,5 @@ Run the following command in your terminal:
 # TODO
 
 - [ ] Make it less janky
+- [ ] Add setting for which Y/N symbol to use
 - [ ] Add a setup tab to tweak settings file
