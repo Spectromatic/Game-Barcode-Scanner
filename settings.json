@@ -85,9 +85,12 @@
         "Condition", 
         "Case Condition",
         "Format", 
+        "Ripped", 
         "Edition", 
         "Developer", 
         "Payed", 
+        "Value",
+        "Sold",
         "DOS", 
         "3.1", 
         "95", 
@@ -99,7 +102,6 @@
         "Win7", 
         "Win10", 
         "DX", 
-        "Ripped", 
         "Copy Protection", 
         "Playable", 
         "Spawnable", 
@@ -110,10 +112,14 @@
         "Setting", 
         "Genre", 
         "Gameplay",
+        "Played",
+        "Completed",
+        "Rating",
+        "Moby Score",
         "Added",
         "UPC"],
     "columns_to_drop": {
-        "NOT_PC": ["DX", "DOS", "3.1", "95", "98", "ME", "2000", "XP", "Vista", "Win7", "Win8", "Win10", "Copy Protection", "Spawnable", "Force Feedback"]
+        "NOT_PC": ["Format", "DX", "DOS", "3.1", "95", "98", "ME", "2000", "XP", "Vista", "Win7", "Win8", "Win10", "Copy Protection", "Spawnable", "Force Feedback"]
     },
     "platform_defaults": {
         "PS1": {
