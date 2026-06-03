@@ -574,7 +574,7 @@ def scrape_prices(game_url, ):
 
 def scrape_price_pricecharting(barcode):
     if active_settings is None:
-        return None
+        return None, None
     
     search_url = f"https://www.pricecharting.com/search-products?type=prices&q={barcode}"
     response = requests.get(search_url)
@@ -584,12 +584,12 @@ def scrape_price_pricecharting(barcode):
 
     if price_soup is None:
         print("Debug: No prices table found.")
-        return None
+        return None, None
 
     # Get the mapped platform name from settings
     platform_name = get_platform_name()
     if platform_name is None:
-        return None
+        return None, None
     
     # Find the row that contains the platform name
     use_pal = active_settings.get("toggles", {}).get("use_pal", False)
@@ -598,7 +598,11 @@ def scrape_price_pricecharting(barcode):
     platform_row = platform_text[0].find_parent('tr') if platform_text else None
     if not platform_row:
         print(f"Debug: No prices found for platform {platform_name}.")
-        return None
+        return None, None
+
+    # Get the link to item that matches the platform
+    item_cell = platform_row.find('td', class_='title')
+    item_link = item_cell.find('a')['href'] if item_cell else None
     
     condition = get_condition()
     sealed = condition and 'sealed' in condition.lower()
@@ -613,7 +617,7 @@ def scrape_price_pricecharting(barcode):
     if price_header is None:
         header_tr = price_soup.find('thead').find('tr') if price_soup.find('thead') else None
         if header_tr is None:
-            return None
+            return None, None
 
         for th in header_tr.find_all('th'):
             txt = th.get_text(separator=' ', strip=True).lower()
@@ -623,7 +627,7 @@ def scrape_price_pricecharting(barcode):
 
     if price_header is None:
         print(f"Debug: No '{price_type}' column found in prices table.")
-        return None
+        return None, None
     
     price_index = price_header.parent.find_all('th').index(price_header)
     price = None
@@ -638,7 +642,7 @@ def scrape_price_pricecharting(barcode):
         
         price = price_text
 
-    return price if price else None
+    return (price if price else None, item_link)
 
 def scrape_specs(game_url):
     game_url = f"{game_url}/specs"
@@ -694,6 +698,27 @@ def scrape_for_dt_mul(soup, text):
 
     return a_elements
 
+def scrape_upc(game_url):
+    response = requests.get(game_url)
+    soup = bs.BeautifulSoup(response.text, 'html.parser')
+
+    upc_soup = soup.find('table', id='attribute')
+
+    if upc_soup is None:
+        print("Debug: No UPC table found.")
+        return None
+    
+    # Find the row that contains the platform name
+    upc_row = upc_soup.find('tr', itemprop='identifier')
+    if not upc_row:
+        print(f"Debug: No UPC found {upc_row}.")
+        return None
+    
+    upc = upc_row.find('td', class_='details').text.strip()
+    print(f"Debug: Found UPC: {upc}")
+    
+    return upc if upc else None     
+
 def search_game(query):
     global active_specs
     # Search for the name in the settings and return the corresponding value
@@ -736,14 +761,21 @@ def search_game(query):
     if active_game_data is None:
         handle_error("Failed to scrape game data.")
         return None
-    if is_upc(query):
-        active_physical_data['upc'] = query
+    
     # Only the specs for PC titles
     if platform_name.lower() in ["pc", "windows"]:
         active_specs = scrape_specs(url)
 
     #active_physical_data['price'] = scrape_prices(url)
-    active_physical_data['price'] = scrape_price_pricecharting(query)
+    active_physical_data['price'], item_link = scrape_price_pricecharting(query)
+    if is_upc(query):
+        active_physical_data['upc'] = query
+        print(f"Debug: Using UPC from search query: {active_physical_data['upc']}")
+    elif item_link:
+        active_physical_data['upc'] = scrape_upc(item_link)
+        print(f"Debug: Scraped UPC: {active_physical_data['upc']}")
+    else:
+        print("Debug: No UPC found from search query or item page.")
     update_button_states("normal")
     update_info_frame()
     button_focus_accept()
@@ -772,7 +804,7 @@ def selections_update(name, value):
         should_refetch = (name == "conditions" and ("sealed" in new_condition or ("sealed" in old_condition and "sealed" not in new_condition))) or (name == "contents" and ("loose" in new_content or ("loose" in old_content and "loose" not in new_content)))
         price = None
         if should_refetch:
-            price = scrape_price_pricecharting(active_physical_data.get("upc") or active_game_data.get("title", [None])[0])
+            price, _ = scrape_price_pricecharting(active_physical_data.get("upc") or active_game_data.get("title", [None])[0])
 
         if price is not None:
             active_physical_data["price"] = price
