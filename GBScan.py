@@ -125,6 +125,7 @@ def game_accept():
         "Edition": active_settings['editions'][active_selections.get("editions", tk.IntVar()).get()],
         "Developer": [active_game_data.get('developer')] if active_game_data.get('developer') else "",
         "Payed": [active_game_data.get('payed')] if active_game_data.get('payed') else "",
+        "Value": [active_physical_data.get('price')] if active_physical_data.get('price') else "",
         "DOS": [active_specs.get('DOS', '')] if active_specs else "",
         "3.1": [active_specs.get('3.1', '')] if active_specs else "",
         "95": [active_specs.get('95', '')] if active_specs else "",
@@ -147,6 +148,7 @@ def game_accept():
         "Setting": [active_taxonomy.get('setting')] if active_taxonomy.get('setting') else "",
         "Genre": [active_taxonomy.get('genre')] if active_taxonomy.get('genre') else "",
         "Gameplay": [active_taxonomy.get('gameplay')] if active_taxonomy.get('gameplay') else "",
+        "Moby Score": [active_taxonomy.get('moby_score')] if active_taxonomy.get('moby_score') else "",
         "Added": [pd.Timestamp.now().strftime("%Y-%m-%d")],
         "UPC": [active_physical_data.get('upc')] if active_physical_data.get('upc') else ""
     }
@@ -199,6 +201,21 @@ def game_log(title, platform, release_date, format):
     logtree.insert("", "end", values=(title, release_date, platform, format), tags=(tag,))
     print(f"Debug: Logged game - Title: {title}, Platform: {platform}, Release Date: {release_date}, Format: {format}")
 
+def get_condition():
+    if active_settings is None:
+        return None
+    return active_settings["conditions"][active_selections.get("conditions", tk.IntVar()).get()]
+
+def get_contents():
+    if active_settings is None:
+        return None
+    return active_settings["contents"][active_selections.get("contents", tk.IntVar()).get()]
+
+def get_platform_name():
+    if active_settings is None:
+        return None
+    return active_settings.get("platform_mapping", {}).get(active_settings["platforms"][active_selections.get("platforms", tk.IntVar()).get()])
+
 def handle_ellipsis(text, max_length=30):
     return text if len(text) <= max_length else text[:max_length-3] + "..."
 
@@ -248,7 +265,10 @@ def populate_menu(frame, name, options):
     var.trace_add("write", on_change)
 
     for index, option in enumerate(options):
-        btn = ttk.Button(frame, text=option, width=max_length, command=lambda i=index: var.set(i))
+        style_name = f"{name.capitalize()}Button.TButton"
+        style = ttk.Style()
+        style.configure(style_name, background=active_settings["theming"]["custom_colors"].get(name, "#e0e0e0"), foreground="#000000")
+        btn = ttk.Button(frame, text=option, width=max_length, command=lambda i=index: var.set(i), style=style_name)
         btn.config(padding=(0, 0))
         btn.pack(side=tk.LEFT)
         buttons.append(btn)
@@ -506,6 +526,120 @@ def scrape_dx(specs, dict={}):
         print(f"Debug: DirectX Version: {dx_version}")
         dict['DX'] = 'DX' + dx_version if dx_version else 'Unknown'
 
+def scrape_prices(game_url, ):
+    game_url = f"{game_url}/stores"
+    response = requests.get(game_url)
+    soup = bs.BeautifulSoup(response.text, 'html.parser')
+
+    price_soup = soup.find('table', class_='table table-borders table-hover')
+
+    if price_soup is None:
+        print("Debug: No prices table found.")
+        return None
+
+    # Get the mapped platform name from settings
+    platform_name = get_platform_name()
+    if platform_name is None:
+        return None
+    
+    # Find the row that contains the platform name
+    platform_row = price_soup.find_all('td', string=lambda text: text and platform_name in text)
+    if not platform_row:
+        print(f"Debug: No prices found for platform {platform_name}.")
+        return None
+    
+    condition = get_condition()
+    sealed = condition and 'sealed' in condition.lower()
+    price_type = 'New Price' if sealed else 'Used Price'
+    # Get the corresponding Used Price or New Price column depending on the condition
+    price_header = price_soup.find('th', string=price_type)
+    if price_header is None:
+        print(f"Debug: No '{price_type}' column found in prices table.")
+        return None
+    
+    price_index = price_header.parent.find_all('th').index(price_header)
+    price = None
+    for row in platform_row:
+        platform_tr = row.find_parent('tr')
+        row_cells = platform_tr.find_all(['th', 'td'])
+        price_cell = row_cells[price_index]
+        price_text = ' '.join(price_cell.stripped_strings)
+
+        if not re.search(r'[\d\£\$\€]', price_text):
+            continue
+        
+        price = price_text
+
+    return price if price else None
+
+def scrape_price_pricecharting(barcode):
+    if active_settings is None:
+        return None
+    
+    search_url = f"https://www.pricecharting.com/search-products?type=prices&q={barcode}"
+    response = requests.get(search_url)
+    soup = bs.BeautifulSoup(response.text, 'html.parser')
+
+    price_soup = soup.find('table', class_='js-addable hoverable-rows sortable')
+
+    if price_soup is None:
+        print("Debug: No prices table found.")
+        return None
+
+    # Get the mapped platform name from settings
+    platform_name = get_platform_name()
+    if platform_name is None:
+        return None
+    
+    # Find the row that contains the platform name
+    use_pal = active_settings.get("toggles", {}).get("use_pal", False)
+    text_to_find = "pal " + platform_name.lower() if use_pal else platform_name.lower()
+    platform_text = price_soup.find_all('a', string=lambda text: text and (text_to_find in text.lower()))
+    platform_row = platform_text[0].find_parent('tr') if platform_text else None
+    if not platform_row:
+        print(f"Debug: No prices found for platform {platform_name}.")
+        return None
+    
+    condition = get_condition()
+    sealed = condition and 'sealed' in condition.lower()
+    contents = get_contents()
+    loose = contents and 'loose' in contents.lower()
+    price_type = 'New Price' if sealed else 'Loose' if loose else 'CIB Price'
+    # Get the corresponding Used Price or New Price column depending on the condition
+    price_header_text = price_soup.find('span', string=price_type)
+    print(f"Debug: Price Header Text: {price_header_text}")
+    price_header = price_header_text.find_parent('th') if price_header_text else None
+
+    if price_header is None:
+        header_tr = price_soup.find('thead').find('tr') if price_soup.find('thead') else None
+        if header_tr is None:
+            return None
+
+        for th in header_tr.find_all('th'):
+            txt = th.get_text(separator=' ', strip=True).lower()
+            if price_type.lower() in txt or (loose and 'loose' in txt):
+                price_header = th
+                break
+
+    if price_header is None:
+        print(f"Debug: No '{price_type}' column found in prices table.")
+        return None
+    
+    price_index = price_header.parent.find_all('th').index(price_header)
+    price = None
+    for row in platform_row:
+        platform_tr = row.find_parent('tr')
+        row_cells = platform_tr.find_all(['th', 'td'])
+        price_cell = row_cells[price_index]
+        price_text = ' '.join(price_cell.stripped_strings)
+
+        if not re.search(r'[\d\£\$\€]', price_text):
+            continue
+        
+        price = price_text
+
+    return price if price else None
+
 def scrape_specs(game_url):
     game_url = f"{game_url}/specs"
     response = requests.get(game_url)
@@ -604,7 +738,12 @@ def search_game(query):
         return None
     if is_upc(query):
         active_physical_data['upc'] = query
-    active_specs = scrape_specs(url)
+    # Only the specs for PC titles
+    if platform_name.lower() in ["pc", "windows"]:
+        active_specs = scrape_specs(url)
+
+    #active_physical_data['price'] = scrape_prices(url)
+    active_physical_data['price'] = scrape_price_pricecharting(query)
     update_button_states("normal")
     update_info_frame()
     button_focus_accept()
@@ -616,10 +755,28 @@ def selections_update(name, value):
 
     if active_settings is None:
         return
+    
+    old_condition = active_physical_data.get("condition", "").lower()
+    old_content = active_physical_data.get("content", "").lower()
 
     for setting in active_physical_data.keys():
         setting_plural = setting + "s"
+        options = active_settings.get(setting_plural, [])
+        if not options:
+            continue
         active_physical_data[setting] = active_settings[setting_plural][active_selections.get(setting_plural, tk.IntVar()).get()]
+
+    if name in ("conditions", "contents"):
+        new_condition = (active_physical_data.get("condition") or "").lower()
+        new_content = (active_physical_data.get("content") or "").lower()
+        should_refetch = (name == "conditions" and ("sealed" in new_condition or ("sealed" in old_condition and "sealed" not in new_condition))) or (name == "contents" and ("loose" in new_content or ("loose" in old_content and "loose" not in new_content)))
+        price = None
+        if should_refetch:
+            price = scrape_price_pricecharting(active_physical_data.get("upc") or active_game_data.get("title", [None])[0])
+
+        if price is not None:
+            active_physical_data["price"] = price
+            print(f"Debug: Re-fetched price for UPC {active_physical_data.get('upc') or active_game_data.get('title', [None])[0]}: {price}")
 
     update_info_frame()
 
@@ -785,7 +942,6 @@ def write_new_headers(data, existing_data):
     return combined, new_reindexed
 
 def write_to_file(data, platform):
-    # Load settings
     if active_settings is None:
         return
 
@@ -795,10 +951,20 @@ def write_to_file(data, platform):
         file_name = f"{platform}_scanned_collection.xlsx" if not active_settings['toggles'].get('use_xls_collate_sheets', False) else "scanned_collection.xlsx"
     clipboard = active_settings['toggles'].get('use_clipboard', True)
 
-    file_exists = os.path.isfile(file_name) 
-    existing = pd.read_excel(file_name, sheet_name=platform, engine='openpyxl', dtype=str) if file_exists and active_settings['toggles'].get('use_xls', False) else pd.read_csv(file_name, sep='\t', dtype=str) if file_exists else pd.DataFrame()
-    combined, new_reindexed = write_new_headers(data, existing)
+    # Read the existing file and make sure the platform sheet exists if using xls
+    file_exists = os.path.isfile(file_name)
+    use_xls = active_settings['toggles'].get('use_xls', False)
+    existing = pd.DataFrame()
+    if file_exists:
+        if use_xls:
+            xl = pd.ExcelFile(file_name, engine='openpyxl')
+            if platform in xl.sheet_names:
+                existing = pd.read_excel(file_name, sheet_name=platform, engine='openpyxl', dtype=str)
+        else:
+            existing = pd.read_csv(file_name, sep='\t', dtype=str)
 
+    # Make sure the headers are right
+    combined, new_reindexed = write_new_headers(data, existing)
     use_split = active_settings.get('toggles', {}).get('use_content_split', False)
     if use_split:
         combined = combined.drop(columns=['Contents'], errors='ignore')
@@ -809,7 +975,6 @@ def write_to_file(data, platform):
             combined = combined.drop(columns=[col], errors='ignore')
         new_reindexed = new_reindexed.drop(columns=[col for col in drop_content_cols if col in new_reindexed.columns], errors='ignore')
 
-    # Determine columns to drop
     # Drop the specified columns, or the columns that don't match the platform
     drop_columns = []
     for key, columns in (active_settings.get('columns_to_drop') or {}).items():
@@ -819,9 +984,9 @@ def write_to_file(data, platform):
     combined = combined.drop(columns=drop_columns, errors='ignore')  
     new_reindexed = new_reindexed.drop(columns=drop_columns, errors='ignore')
 
-    # Overwrite file with combined to keep header in sync
-    if active_settings['toggles'].get('use_xls', False):
-        with pd.ExcelWriter(file_name, engine='openpyxl', mode='w') as writer:
+    # Write the file back with new data
+    if use_xls:
+        with pd.ExcelWriter(file_name, engine='openpyxl', mode='a' if file_exists else 'w', if_sheet_exists='replace') as writer:
             combined.to_excel(writer, sheet_name=platform, index=False)
     else:
         combined.to_csv(file_name, sep='\t', index=False)

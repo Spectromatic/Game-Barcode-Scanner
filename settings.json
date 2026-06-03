@@ -194,18 +194,19 @@
         "use_content_split": true,
         "use_custom_ttk_theme": true,
         "use_custom_colors": false,
-        "use_dx_point_drop": true
+        "use_dx_point_drop": true,
+        "use_pal": true
     },
     "theming": {
         "ttk_theme": "clam",
         "available_themes": ["clam", "alt", "default","classic"],
         "custom_colors": {
-            "background": "#f0f0f0",
-            "foreground": "#000000",
-            "button_background": "#e0e0e0",
-            "button_foreground": "#000000",
-            "entry_background": "#ffffff",
-            "entry_foreground": "#000000",
+            "platforms": "#009999",
+            "formats": "#009966",
+            "conditions": "#006699",
+            "case_conditions": "#00AA99",
+            "contents": "#00AA66",
+            "editions": "#0099AA",
             "row_even_bg": "#f8f8f8",
             "row_odd_bg": "#e8e8e8"
         }
