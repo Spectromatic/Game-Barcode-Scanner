@@ -23,6 +23,8 @@ active_title = None
 frames = []
 frames_padded = []
 infoframe = None
+choicesframe = None
+contextlist = []
 searchentry = None
 acceptbutton = None
 logframe = None
@@ -214,7 +216,7 @@ def get_contents():
 def get_platform_name():
     if active_settings is None:
         return None
-    return active_settings.get("platform_mapping", {}).get(active_settings["platforms"][active_selections.get("platforms", tk.IntVar()).get()])
+    return active_settings.get("platform_mapping", {}).get(active_settings["platforms"][active_selections.get("platforms", tk.IntVar()).get()]) or ""
 
 def handle_ellipsis(text, max_length=30):
     return text if len(text) <= max_length else text[:max_length-3] + "..."
@@ -233,6 +235,14 @@ def handle_single_option(options):
         return str(options[0])
     # If it's not a single option, just return the list back
     return ", ".join(str(x) for x in options)
+
+def handle_toggle_change(toggle):
+    if active_settings is None:
+        return
+    toggles = active_settings.get("toggles", {})
+    current_value = toggles.get(toggle, False)
+    toggles[toggle] = not current_value
+    settings_save()
 
 def is_upc(text: str) -> bool:
     # Check if the text is a 12 or 13 digit UPC
@@ -302,6 +312,22 @@ def populate_selections(frame, i, offset, current_selection, value, key, label_c
         btn.state(['pressed'] if val == active_selection.get() else ['!pressed'])
 
     return active_selection, offset
+
+def populate_toggles(frame):
+    if active_settings is None:
+        return
+    
+    max_columns = 5
+    toggle_column = 0
+    toggle_row = 0
+    toggles = active_settings.get("toggles", {})
+    for toggle, value in toggles.items():
+        btn = ttk.Checkbutton(frame, text=toggle.replace("_", " ").title(), variable=tk.BooleanVar(value=value), command=lambda t=toggle: handle_toggle_change(t))
+        btn.grid(row=toggle_row, column=toggle_column, sticky=tk.W)
+        toggle_column += 1
+        if toggle_column >= max_columns:
+            toggle_column = 0
+            toggle_row += 1
 
 def recall_log_item(event=None):
     global logtree, active_settings
@@ -465,9 +491,9 @@ def scrape_game_data(game_url):
     active_taxonomy['setting'] = scrape_for_dt(soup, 'Setting') or ''
 
     active_physical_data['format'] = active_settings["formats"][active_selections.get("formats", tk.IntVar()).get()]
-    active_physical_data['condition'] = active_settings["conditions"][active_selections.get("conditions", tk.IntVar()).get()]
+    active_physical_data['condition'] = get_condition()
     active_physical_data['case_condition'] = active_settings["case_conditions"][active_selections.get("case_conditions", tk.IntVar()).get()]
-    active_physical_data['content'] = active_settings["contents"][active_selections.get("contents", tk.IntVar()).get()]
+    active_physical_data['content'] = get_contents()
     active_physical_data['edition'] = active_settings["editions"][active_selections.get("editions", tk.IntVar()).get()]
 
     print(f"Debug: Game Data: {active_game_data}")
@@ -732,13 +758,8 @@ def search_game(query):
     # Find the first search result link
     results = soup.find_all('table', {'class': 'table mb'})
 
-    # Get the current platform from the active selections    
-    active_platform_index = active_selections.get("platforms", tk.IntVar()).get()
-    active_platform = active_settings["platforms"][active_platform_index]
-
     # Use platform mapping to convert the platform name to the format used on Mobygames
-    platform_mapping = active_settings.get("platform_mapping", {})
-    platform_name = platform_mapping.get(active_platform, active_platform)
+    platform_name = get_platform_name()
 
     url = None
     # Find the URL that matches the selected platform
@@ -763,7 +784,7 @@ def search_game(query):
         return None
     
     # Only the specs for PC titles
-    if platform_name.lower() in ["pc", "windows"]:
+    if platform_name and platform_name.lower() in ["pc", "windows"]:
         active_specs = scrape_specs(url)
 
     #active_physical_data['price'] = scrape_prices(url)
@@ -824,6 +845,19 @@ def settings_load():
         #handle_error(f"Error loading settings: {e}")
         active_settings = None
 
+def settings_save():
+    # Save settings to the settings.json file
+    global active_settings
+    if active_settings is None:
+        return
+    try:
+        with open(os.path.join(BASE_DIR, "settings.json"), "w") as f:
+            json.dump(active_settings, f, indent=4)
+        print("Settings saved successfully.")
+    except Exception as e:
+        print(f"Error saving settings: {e}")
+        handle_error(f"Error saving settings: {e}")
+
 def settings_set_defaults(platform_index:int = 0):
     # Set default values for settings based on the selected platform
     global active_settings
@@ -855,6 +889,36 @@ def update_button_states(state):
         for child in search_frame.winfo_children():
             if isinstance(child, ttk.Button):
                 child.config(state=state)
+
+def update_choices(choiceentries):
+    # Update the choices for context selection
+    global active_settings
+    if active_settings is None:
+        return
+
+    changes = False
+    for choice, entry in choiceentries.items():
+        # Get the text in the entry and split it by semicolons
+        text = entry.get()
+        choices = [t.strip() for t in text.split(";") if t.strip()]
+
+        # Update the corresponding settings value based on the entry
+        if active_settings.get(choice) == choices:
+            continue
+
+        active_settings[choice] = choices
+        changes = True
+
+    if changes:
+        settings_save()
+        for key, frame in contextlist:
+            if key not in choiceentries:
+                continue
+            
+            # clear existing widgets so populate_menu doesn't duplicate
+            for child in frame.winfo_children():
+                child.destroy()
+            populate_menu(frame, key, active_settings.get(key, []))
 
 def update_info_choice(key, value):
     global active_title, active_perspective
@@ -1027,7 +1091,7 @@ def write_to_file(data, platform):
         pyperclip.copy(new_reindexed.to_csv(sep='\t', index=False, header=False))
 
 def main():
-    global infoframe, searchentry, logframe, logtree, acceptbutton
+    global infoframe, searchentry, logframe, logtree, acceptbutton, contextlist
     if active_settings is None:
         handle_error("No settings available.")
         return
@@ -1045,12 +1109,15 @@ def main():
     style.configure("InfoDataEven.TLabel", background=even_bg)
     style.configure("InfoDataOdd.TLabel", background=odd_bg)
 
+    main_notebook = ttk.Notebook(root)
+    main_notebook.grid(row=0, column=0, sticky="nsew")
+
     mainrow = 0
-    mainframe = ttk.Frame(root, padding="8")
+    mainframe = ttk.Frame(main_notebook, padding="8")
     mainframe.grid(row=0, column=0, sticky=tk.N+tk.S+tk.E+tk.W)
 
     contextrow = 0
-    contextframe = ttk.LabelFrame(mainframe, text="Setup", padding="8")
+    contextframe = ttk.LabelFrame(mainframe, text="Physical State", padding="8")
     contextframe.grid(row=mainrow, column=0, sticky=tk.W+tk.E)
     mainrow += 1
 
@@ -1058,43 +1125,37 @@ def main():
     platformframe.grid(row=contextrow, column=0, sticky=tk.W+tk.E)
     frames.append(platformframe)
     contextrow += 1
-
-    populate_menu(platformframe, "platforms", active_settings["platforms"])
+    contextlist.append(("platforms", platformframe))
 
     formatframe = ttk.Frame(contextframe, padding="2")
     formatframe.grid(row=contextrow, column=0, sticky=tk.W+tk.E)
     frames.append(formatframe)
     contextrow += 1
-
-    populate_menu(formatframe, "formats", active_settings["formats"])
+    contextlist.append(("formats", formatframe))
 
     conditionframe = ttk.Frame(contextframe, padding="2")
     conditionframe.grid(row=contextrow, column=0, sticky=tk.W+tk.E)
     frames.append(conditionframe)
     contextrow += 1
-
-    populate_menu(conditionframe, "conditions", active_settings["conditions"])
+    contextlist.append(("conditions", conditionframe))
 
     caseconditionframe = ttk.Frame(contextframe, padding="2")
     caseconditionframe.grid(row=contextrow, column=0, sticky=tk.W+tk.E)
     frames.append(caseconditionframe)
     contextrow += 1
-
-    populate_menu(caseconditionframe, "case_conditions", active_settings["case_conditions"])
+    contextlist.append(("case_conditions", caseconditionframe))
 
     contentframe = ttk.Frame(contextframe, padding="2")
     contentframe.grid(row=contextrow, column=0, sticky=tk.W+tk.E)
     frames.append(contentframe)
     contextrow += 1
-
-    populate_menu(contentframe, "contents", active_settings["contents"])
+    contextlist.append(("contents", contentframe))
 
     editionframe = ttk.Frame(contextframe, padding="2")
     editionframe.grid(row=contextrow, column=0, sticky=tk.W+tk.E)
     frames.append(editionframe)
     contextrow += 1
-
-    populate_menu(editionframe, "editions", active_settings["editions"])
+    contextlist.append(("editions", editionframe))
 
     databaseframe = ttk.Frame(contextframe, padding="2")
     databaseframe.grid(row=contextrow, column=0, sticky=tk.W+tk.E)
@@ -1106,6 +1167,8 @@ def main():
     frames_padded.append(infoframe)
     mainrow += 1
 
+    for key, frame in contextlist:
+        populate_menu(frame, key, active_settings[key])
     update_info_frame()
 
     logframe = ttk.LabelFrame(mainframe, text="Log", padding="2")
@@ -1142,10 +1205,87 @@ def main():
     searchbutton = ttk.Button(searchframe, text="Search", command=lambda: search_game(searchentry.get() if searchentry is not None else ""))
     searchbutton.grid(row=0, column=2, sticky=tk.W)
 
-    acceptbutton = ttk.Button(searchframe, text="Accept", state="disabled", command=lambda: game_accept())
+    acceptbutton = ttk.Button(searchframe, text="Accept (Y)", state="disabled", command=lambda: game_accept())
     acceptbutton.grid(row=0, column=3, sticky=tk.W)
-    declinebutton = ttk.Button(searchframe, text="Decline", state="disabled", command=lambda: game_decline())
+    declinebutton = ttk.Button(searchframe, text="Discard (N)", state="disabled", command=lambda: game_decline())
     declinebutton.grid(row=0, column=4, sticky=tk.W)
+
+    # Settings Tab where the user can set edit the settings.json file
+    setup_tab = ttk.Frame(main_notebook, padding="8")
+    setup_tab.columnconfigure(1, weight=1)
+    setuprow = 0
+    choiceentries = {}
+
+    choicesframe = ttk.LabelFrame(setup_tab, text="Choices", padding="8")
+    choicesframe.grid(row=setuprow, column=0, sticky=tk.W+tk.E)
+    choicesframe.columnconfigure(1, weight=1)
+    frames_padded.append(choicesframe)
+    setuprow += 1
+    choicesrow = 0
+
+    splatformslabel = ttk.Label(choicesframe, text="Platforms:")
+    splatformslabel.grid(row=choicesrow, column=0, sticky=tk.W)
+    splatformsstringvar = tk.StringVar(value="; ".join(active_settings.get("platforms", [])))
+    splatformsentry = ttk.Entry(choicesframe)
+    splatformsentry.grid(row=choicesrow, column=1, sticky=tk.W+tk.E)
+    splatformsentry.config(textvariable=splatformsstringvar)
+    choiceentries["platforms"] = splatformsentry
+    choicesrow += 1
+
+    sformatslabel = ttk.Label(choicesframe, text="Formats:")
+    sformatslabel.grid(row=choicesrow, column=0, sticky=tk.W)
+    sformatsentrystringvar = tk.StringVar(value="; ".join(active_settings.get("formats", [])))
+    sformatsentry = ttk.Entry(choicesframe)
+    sformatsentry.grid(row=choicesrow, column=1, sticky=tk.W+tk.E)
+    sformatsentry.config(textvariable=sformatsentrystringvar)
+    choiceentries["formats"] = sformatsentry
+    choicesrow += 1
+
+    sconditionslabel = ttk.Label(choicesframe, text="Conditions:")
+    sconditionslabel.grid(row=choicesrow, column=0, sticky=tk.W)
+    sconditionsstringvar = tk.StringVar(value="; ".join(active_settings.get("conditions", [])))
+    sconditionsentry = ttk.Entry(choicesframe)
+    sconditionsentry.grid(row=choicesrow, column=1, sticky=tk.W+tk.E)
+    sconditionsentry.config(textvariable=sconditionsstringvar)
+    choiceentries["conditions"] = sconditionsentry
+    choicesrow += 1
+
+    scaseconditionslabel = ttk.Label(choicesframe, text="Case Conditions:")
+    scaseconditionslabel.grid(row=choicesrow, column=0, sticky=tk.W)
+    scaseconditionsstringvar = tk.StringVar(value="; ".join(active_settings.get("case_conditions", [])))
+    scaseconditionsentry = ttk.Entry(choicesframe)
+    scaseconditionsentry.grid(row=choicesrow, column=1, sticky=tk.W+tk.E)
+    scaseconditionsentry.config(textvariable=scaseconditionsstringvar)
+    choiceentries["case_conditions"] = scaseconditionsentry
+    choicesrow += 1
+
+    scontentslabel = ttk.Label(choicesframe, text="Contents:")
+    scontentslabel.grid(row=choicesrow, column=0, sticky=tk.W)
+    scontentsstringvar = tk.StringVar(value="; ".join(active_settings.get("contents", [])))
+    scontentsentry = ttk.Entry(choicesframe)
+    scontentsentry.grid(row=choicesrow, column=1, sticky=tk.W+tk.E)
+    scontentsentry.config(textvariable=scontentsstringvar)
+    choiceentries["contents"] = scontentsentry
+    choicesrow += 1
+
+    seditionslabel = ttk.Label(choicesframe, text="Editions:")
+    seditionslabel.grid(row=choicesrow, column=0, sticky=tk.W)
+    seditionsstringvar = tk.StringVar(value="; ".join(active_settings.get("editions", [])))
+    seditionsentry = ttk.Entry(choicesframe)
+    seditionsentry.grid(row=choicesrow, column=1, sticky=tk.W+tk.E)
+    seditionsentry.config(textvariable=seditionsstringvar)
+    choiceentries["editions"] = seditionsentry
+    choicesrow += 1
+
+    togglesframe = ttk.LabelFrame(setup_tab, text="Toggles", padding="8")
+    togglesframe.grid(row=setuprow, column=0, sticky=tk.W+tk.E)
+    togglesframe.columnconfigure(1, weight=1)
+    frames_padded.append(togglesframe)
+    setuprow += 1
+    populate_toggles(togglesframe)
+
+    main_notebook.add(mainframe, text="Main")
+    main_notebook.add(setup_tab, text="Setup")
 
     # Invoke the Search button when Enter is pressed inside the entry
     searchentry.bind('<Return>', lambda event: searchbutton.invoke())
@@ -1161,12 +1301,15 @@ def main():
 
     logtree.bind("<Double-1>", recall_log_item)
     root.bind_all('<y>', handle_accept_key)
-    root.bind_all('<n>', handle_decline_key)
     root.bind_all('<Y>', handle_accept_key)
+    root.bind_all('<n>', handle_decline_key)
     root.bind_all('<N>', handle_decline_key)
+    root.bind_all('<Delete>', handle_decline_key)
     root.bind_all('<Control-q>', lambda event: root.quit())
     if searchentry is not None:
         root.bind_all('<Control-a>', button_select_all)
+
+    main_notebook.bind("<<NotebookTabChanged>>", lambda event: update_choices(choiceentries))
 
     # Get the shortcuts and bind them, with and without shift if applicable
     shortcuts = active_settings.get("shortcuts", {}) if active_settings else {}
