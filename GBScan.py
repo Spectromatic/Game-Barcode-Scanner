@@ -1,3 +1,4 @@
+import colorsys
 import json
 import os
 import pyperclip
@@ -203,6 +204,11 @@ def game_log(title, platform, release_date, format):
     logtree.insert("", "end", values=(title, release_date, platform, format), tags=(tag,))
     print(f"Debug: Logged game - Title: {title}, Platform: {platform}, Release Date: {release_date}, Format: {format}")
 
+def get_color(name, default):
+    if active_settings is None:
+        return default
+    return active_settings["theming"]["custom_colors"].get(name, default) if is_toggled("use_custom_colors") else default
+
 def get_condition():
     if active_settings is None:
         return None
@@ -239,14 +245,34 @@ def handle_single_option(options):
 def handle_toggle_change(toggle):
     if active_settings is None:
         return
-    toggles = active_settings.get("toggles", {})
-    current_value = toggles.get(toggle, False)
-    toggles[toggle] = not current_value
+    toggles = active_settings.setdefault("toggles", {})
+    toggles[toggle] = not toggles.get(toggle, False)
+
+    # Update the context choices if a toggle change affects them
+    update_choices(changes=True)
     settings_save()
+
+def is_toggled(toggle):
+    if active_settings is None:
+        return False
+    return active_settings.get("toggles", {}).get(toggle, False)
 
 def is_upc(text: str) -> bool:
     # Check if the text is a 12 or 13 digit UPC
     return bool(re.fullmatch(r'\d{13}', text) or re.fullmatch(r'\d{12}', text))
+
+def modify_color(hex_color: str, amount: float) -> str:
+    hex_color = hex_color.strip().lstrip('#')
+    if len(hex_color) != 6:
+        return hex_color
+    r = int(hex_color[0:2], 16) / 255.0
+    g = int(hex_color[2:4], 16) / 255.0
+    b = int(hex_color[4:6], 16) / 255.0
+
+    h, s, v = colorsys.rgb_to_hsv(r, g, b)
+    new_v = max(0.0, min(1.0, v + amount))
+    nr, ng, nb = colorsys.hsv_to_rgb(h, s, new_v)
+    return "#{:02x}{:02x}{:02x}".format(int(round(nr*255)), int(round(ng*255)), int(round(nb*255)))
 
 def populate_menu(frame, name, options):
     # Populate a menu with the given options
@@ -274,10 +300,25 @@ def populate_menu(frame, name, options):
 
     var.trace_add("write", on_change)
 
+    # Button theming and button position
     for index, option in enumerate(options):
+        
         style_name = f"{name.capitalize()}Button.TButton"
         style = ttk.Style()
-        style.configure(style_name, background=active_settings["theming"]["custom_colors"].get(name, "#e0e0e0"), foreground="#000000")
+        style.configure(style_name, 
+                        background=get_color(name, "#e0e0e0"), 
+                        foreground="#000000",
+                        lightcolor=modify_color(get_color(name, "#d0d0d0"), 0.2),
+                        darkcolor=modify_color(get_color(name, "#c0c0c0"), -0.1),
+                        bordercolor=modify_color(get_color(name, "#a0a0a0"), -0.2))
+        style.map(style_name,
+                    background=[('pressed', modify_color(get_color(name, "#d0d0d0"), -0.1)),
+                                ('active', modify_color(get_color(name, "#d0d0d0"), 0.1))],
+                    foreground=[('pressed', modify_color(get_color(name, "#000000"), 0.25)), 
+                                ('active', modify_color(get_color(name, "#000000"), 0.5))],
+                    bordercolor=[('pressed', modify_color(get_color(name, "#a0a0a0"), -0.3)),
+                                 ('active', modify_color(get_color(name, "#a0a0a0"), -0.1))],
+                    relief=[('pressed', 'sunken'), ('!pressed', 'raised')])
         btn = ttk.Button(frame, text=option, width=max_length, command=lambda i=index: var.set(i), style=style_name)
         btn.config(padding=(0, 0))
         btn.pack(side=tk.LEFT)
@@ -890,13 +931,15 @@ def update_button_states(state):
             if isinstance(child, ttk.Button):
                 child.config(state=state)
 
-def update_choices(choiceentries):
+def update_choices(choiceentries = None, changes=False):
     # Update the choices for context selection
     global active_settings
     if active_settings is None:
         return
 
-    changes = False
+    if choiceentries is None:
+        choiceentries = {}
+
     for choice, entry in choiceentries.items():
         # Get the text in the entry and split it by semicolons
         text = entry.get()
@@ -909,16 +952,18 @@ def update_choices(choiceentries):
         active_settings[choice] = choices
         changes = True
 
-    if changes:
-        settings_save()
-        for key, frame in contextlist:
-            if key not in choiceentries:
-                continue
-            
-            # clear existing widgets so populate_menu doesn't duplicate
-            for child in frame.winfo_children():
-                child.destroy()
-            populate_menu(frame, key, active_settings.get(key, []))
+    if not changes:
+        return
+
+    settings_save()
+    for key, frame in contextlist:
+        if choiceentries and key not in choiceentries:
+            continue
+        
+        # clear existing widgets so populate_menu doesn't duplicate
+        for child in frame.winfo_children():
+            child.destroy()
+        populate_menu(frame, key, active_settings.get(key, []))
 
 def update_info_choice(key, value):
     global active_title, active_perspective

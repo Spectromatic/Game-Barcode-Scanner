@@ -212,7 +212,7 @@
         "use_full_platform_name": false,
         "use_content_split": true,
         "use_custom_ttk_theme": true,
-        "use_custom_colors": false,
+        "use_custom_colors": true,
         "use_dx_point_drop": true,
         "use_pal": true
     },
@@ -225,12 +225,12 @@
             "classic"
         ],
         "custom_colors": {
-            "platforms": "#009999",
-            "formats": "#009966",
-            "conditions": "#006699",
-            "case_conditions": "#00AA99",
-            "contents": "#00AA66",
-            "editions": "#0099AA",
+            "platforms": "#00AAAA",
+            "formats": "#00AA99",
+            "conditions": "#0099AA",
+            "case_conditions": "#00AA88",
+            "contents": "#00BB88",
+            "editions": "#0099BB",
             "row_even_bg": "#f8f8f8",
             "row_odd_bg": "#e8e8e8"
         }
