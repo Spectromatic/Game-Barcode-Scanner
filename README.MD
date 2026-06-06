@@ -26,4 +26,6 @@ Run the following command in your terminal:
 
 - [ ] Make it less janky
 - [ ] Add setting for which Y/N symbol to use
+- [ ] Add ability to re-order the column order from the setup tab
+- [ ] Add ability to exclude columns per platform on setup tab
 - [x] Add a setup tab to tweak settings file

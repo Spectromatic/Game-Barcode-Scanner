@@ -7,6 +7,7 @@ import requests
 import bs4 as bs
 import pandas as pd
 import tkinter as tk
+from PIL import Image, ImageDraw, ImageFont, ImageTk
 from tkinter import ttk
 from tkinter import messagebox
 
@@ -30,6 +31,7 @@ searchentry = None
 acceptbutton = None
 logframe = None
 logtree = None
+_exclusion_image_refs = []
 
 def button_focus_accept():
     global acceptbutton
@@ -274,6 +276,82 @@ def modify_color(hex_color: str, amount: float) -> str:
     nr, ng, nb = colorsys.hsv_to_rgb(h, s, new_v)
     return "#{:02x}{:02x}{:02x}".format(int(round(nr*255)), int(round(ng*255)), int(round(nb*255)))
 
+def open_exclusion_window():
+    global _exclusion_image_refs
+    if active_settings is None:
+        return
+    exclusion_window = tk.Toplevel()
+    exclusion_window.title("Exclusion List")
+    exclusion_window.geometry("1000x500")
+
+    platforms = active_settings.get("platforms", [])
+    columns = active_settings.get("column_order", [])
+    cols_to_drop = active_settings.setdefault("columns_to_drop", {})
+
+    exclusion_root_frame = ttk.Frame(exclusion_window)
+    exclusion_root_frame.grid(row=0, column=0, sticky="nsew")
+
+    add_rule_frame = ttk.Labelframe(exclusion_root_frame, text="Add Exclusion Rule")
+    add_rule_frame.grid(row=0, column=0, sticky="nsew")
+    add_rule_col = 0
+
+    add_not_check_var = tk.BooleanVar(value=False)
+    add_not_check = ttk.Checkbutton(add_rule_frame, text="NOT_", variable=add_not_check_var)
+    add_not_check.grid(row=1, column=add_rule_col, sticky=tk.W)
+    add_rule_col += 1
+
+    add_platform_var = tk.StringVar(value=platforms[0] if platforms else "")
+    add_platform_menu = ttk.OptionMenu(add_rule_frame, add_platform_var, add_platform_var.get(), *platforms)
+    add_platform_menu.grid(row=1, column=add_rule_col, sticky=tk.W)
+    add_rule_col += 1
+
+    for col in columns:
+        img = rotated_text_image(col, font_size=10)
+        _exclusion_image_refs.append(img)
+        label = ttk.Label(add_rule_frame, image=img)
+        label.grid(row=0, column=add_rule_col, sticky="sw")
+        var = tk.BooleanVar(value=False)
+        chk = ttk.Checkbutton(add_rule_frame, variable=var, compound="top")
+        chk.grid(row=1, column=add_rule_col, sticky="nsew")
+        add_rule_col += 1
+
+    # TODO: Add add_rule function and trigger populate_rule_list after adding a rule
+    add_rule_button = ttk.Button(add_rule_frame, text="Add Rule")
+    add_rule_button.grid(row=1, column=add_rule_col, sticky="nsew")
+
+    list_rule_frame = ttk.Labelframe(exclusion_root_frame, text="Current Rules")
+    list_rule_frame.grid(row=1, column=0, sticky="nsew")
+    populate_rule_list(list_rule_frame)
+
+def populate_rule_list(frame):
+    if active_settings is None:
+        return
+    columns = active_settings.get("column_order", [])
+    cols_to_drop = active_settings.get("columns_to_drop", {})
+    col_start = 0
+    for i, (rule, drop_col) in enumerate(cols_to_drop.items()):
+        # Set the inversion bool based on the rule name
+        if rule.startswith("NOT_"):
+            rule = rule[4:]
+            not_var = tk.BooleanVar(value=True)
+        else:
+            not_var = tk.BooleanVar(value=False)
+
+        not_check = ttk.Checkbutton(frame, text="NOT_", variable=not_var)
+        not_check.grid(row=i, column=col_start, sticky="nw")
+        col_start += 1
+
+        rule_platform = tk.StringVar(value=rule.split("_")[1] if "_" in rule else rule)
+        rule_platform_menu = ttk.OptionMenu(frame, rule_platform, rule_platform.get(), *active_settings.get("platforms", []))
+        rule_platform_menu.grid(row=i, column=col_start, sticky="nw")
+        col_start += 1
+
+        for j, col in enumerate(columns, start=col_start):
+            var = tk.BooleanVar(value=col in drop_col)
+            chk = ttk.Checkbutton(frame, variable=var)
+            chk.grid(row=i, column=j, sticky="nsew")
+
+
 def populate_menu(frame, name, options):
     # Populate a menu with the given options
     label_text = name.capitalize().replace("_", " ")
@@ -409,6 +487,18 @@ def recall_log_item(event=None):
     pyperclip.copy(clipboard_data)
 
     messagebox.showinfo("Recalled", f"Copied latest matching row for '{title}' to clipboard from {file_name}")
+
+def rotated_text_image(text, font_size=12, font_path=None):
+    font = ImageFont.truetype(font_path, font_size) if font_path else ImageFont.load_default()
+    dummy = Image.new("RGBA", (1,1), (255,255,255,0))
+    draw = ImageDraw.Draw(dummy)
+    bbox = draw.textbbox((0,0), text, font=font)
+    w, h = int(bbox[2] - bbox[0]), int((bbox[3] - bbox[1])*1.5)
+    img = Image.new("RGBA", (w, h), (255, 255, 255, 0))
+    draw = ImageDraw.Draw(img)
+    draw.text((0, 0), text, fill="black", font=font)
+    img = img.rotate(-90, expand=True)
+    return ImageTk.PhotoImage(img)
 
 def scrape_data_moby_score(soup):
     moby_score = soup.find('div', class_='mobyscore')
@@ -1255,7 +1345,7 @@ def main():
     declinebutton = ttk.Button(searchframe, text="Discard (N)", state="disabled", command=lambda: game_decline())
     declinebutton.grid(row=0, column=4, sticky=tk.W)
 
-    # Settings Tab where the user can set edit the settings.json file
+    # Setup Tab where the user can set edit the settings.json file
     setup_tab = ttk.Frame(main_notebook, padding="8")
     setup_tab.columnconfigure(1, weight=1)
     setuprow = 0
@@ -1322,6 +1412,18 @@ def main():
     choiceentries["editions"] = seditionsentry
     choicesrow += 1
 
+    exclusionframe = ttk.LabelFrame(setup_tab, text="Exclusions", padding="8")
+    exclusionframe.grid(row=setuprow, column=0, sticky=tk.W+tk.E)
+    exclusionframe.columnconfigure(1, weight=1)
+    frames_padded.append(exclusionframe)
+    setuprow += 1
+    
+    eexcludelabel = ttk.Label(exclusionframe, text="Exclude Columns:")
+    eexcludelabel.grid(row=0, column=0, sticky=tk.W)
+    eexcludebutton = ttk.Button(exclusionframe, text="Edit Columns Per Platform", command=lambda: open_exclusion_window())
+    eexcludebutton.grid(row=0, column=1, sticky=tk.W)
+
+    # Display all the toggles from the settings file
     togglesframe = ttk.LabelFrame(setup_tab, text="Toggles", padding="8")
     togglesframe.grid(row=setuprow, column=0, sticky=tk.W+tk.E)
     togglesframe.columnconfigure(1, weight=1)
