@@ -138,6 +138,9 @@
             "Copy Protection",
             "Spawnable",
             "Force Feedback"
+        ],
+        "Switch": [
+            "Condition"
         ]
     },
     "platform_defaults": {

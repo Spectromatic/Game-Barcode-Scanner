@@ -33,6 +33,18 @@ logframe = None
 logtree = None
 _exclusion_image_refs = []
 
+def add_exclusion_rule(frame, platform, add_rule_vars, invert=False):
+    if active_settings is None:
+        return
+    
+    # Get all the columns from the frame's checkbuttons
+    add_rule_vars = [col for col, var in add_rule_vars if var.get()]
+    
+    rule_name = f"NOT_{platform}" if invert else platform
+    active_settings.setdefault("columns_to_drop", {})[rule_name] = add_rule_vars
+    populate_rule_list(frame)
+    settings_save()
+
 def button_focus_accept():
     global acceptbutton
     if acceptbutton is not None and acceptbutton.instate(['!disabled']):
@@ -305,6 +317,7 @@ def open_exclusion_window():
     add_platform_menu.grid(row=1, column=add_rule_col, sticky=tk.W)
     add_rule_col += 1
 
+    add_rule_vars = []
     for col in columns:
         img = rotated_text_image(col, font_size=10)
         _exclusion_image_refs.append(img)
@@ -313,10 +326,10 @@ def open_exclusion_window():
         var = tk.BooleanVar(value=False)
         chk = ttk.Checkbutton(add_rule_frame, variable=var, compound="top")
         chk.grid(row=1, column=add_rule_col, sticky="nsew")
+        add_rule_vars.append((col, var))
         add_rule_col += 1
 
-    # TODO: Add add_rule function and trigger populate_rule_list after adding a rule
-    add_rule_button = ttk.Button(add_rule_frame, text="Add Rule")
+    add_rule_button = ttk.Button(add_rule_frame, text="Add Rule", command=lambda: add_exclusion_rule(list_rule_frame, add_platform_var.get(), add_rule_vars, invert=add_not_check_var.get()))
     add_rule_button.grid(row=1, column=add_rule_col, sticky="nsew")
 
     list_rule_frame = ttk.Labelframe(exclusion_root_frame, text="Current Rules")
@@ -326,31 +339,30 @@ def open_exclusion_window():
 def populate_rule_list(frame):
     if active_settings is None:
         return
+    
     columns = active_settings.get("column_order", [])
     cols_to_drop = active_settings.get("columns_to_drop", {})
-    col_start = 0
+
+    for child in frame.winfo_children():
+        child.destroy()
+
     for i, (rule, drop_col) in enumerate(cols_to_drop.items()):
         # Set the inversion bool based on the rule name
-        if rule.startswith("NOT_"):
-            rule = rule[4:]
-            not_var = tk.BooleanVar(value=True)
-        else:
-            not_var = tk.BooleanVar(value=False)
+        invert = rule.startswith("NOT_")
+        rule_name = rule[4:] if invert else rule
 
+        not_var = tk.BooleanVar(value=invert)
         not_check = ttk.Checkbutton(frame, text="NOT_", variable=not_var)
-        not_check.grid(row=i, column=col_start, sticky="nw")
-        col_start += 1
+        not_check.grid(row=i, column=0, sticky="nw")
 
-        rule_platform = tk.StringVar(value=rule.split("_")[1] if "_" in rule else rule)
+        rule_platform = tk.StringVar(value=rule_name)
         rule_platform_menu = ttk.OptionMenu(frame, rule_platform, rule_platform.get(), *active_settings.get("platforms", []))
-        rule_platform_menu.grid(row=i, column=col_start, sticky="nw")
-        col_start += 1
+        rule_platform_menu.grid(row=i, column=1, sticky="nw")
 
-        for j, col in enumerate(columns, start=col_start):
+        for j, col in enumerate(columns, start=2):
             var = tk.BooleanVar(value=col in drop_col)
             chk = ttk.Checkbutton(frame, variable=var)
             chk.grid(row=i, column=j, sticky="nsew")
-
 
 def populate_menu(frame, name, options):
     # Populate a menu with the given options
