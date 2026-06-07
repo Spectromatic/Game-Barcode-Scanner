@@ -33,40 +33,6 @@ logframe = None
 logtree = None
 _exclusion_image_refs = []
 
-def exclusion_rule_add(frame, platform, add_rule_vars, invert=False):
-    if active_settings is None:
-        return
-    
-    # Get all the columns from the frame's checkbuttons
-    add_rule_vars = [col for col, var in add_rule_vars if var.get()]
-    
-    rule_name = f"NOT_{platform}" if invert else platform
-    active_settings.setdefault("columns_to_drop", {})[rule_name] = add_rule_vars
-    populate_rule_list(frame)
-    settings_save()
-
-def exclusion_rule_delete(frame, rule):
-    if active_settings is None:
-        return
-    
-    active_settings.setdefault("columns_to_drop", {}).pop(rule, None)
-    populate_rule_list(frame)
-    settings_save()
-
-def exclusion_rule_edit(frame, rule, column, value):    
-    if active_settings is None:
-        return
-    
-    cols_to_drop = active_settings.setdefault("columns_to_drop", {}).setdefault(rule, [])
-    if value:
-        if column not in cols_to_drop:
-            cols_to_drop.append(column)
-    else:
-        if column in cols_to_drop:
-            cols_to_drop.remove(column)
-    populate_rule_list(frame)
-    settings_save()
-
 def button_focus_accept():
     global acceptbutton
     if acceptbutton is not None and acceptbutton.instate(['!disabled']):
@@ -120,6 +86,40 @@ def cycle_setup(name, direction):
             searchentry.focus_set()
     return handler
 
+def exclusion_rule_add(frame, platform, add_rule_vars, invert=False):
+    if active_settings is None:
+        return
+    
+    # Get all the columns from the frame's checkbuttons
+    add_rule_vars = [col for col, var in add_rule_vars if var.get()]
+    
+    rule_name = f"NOT_{platform}" if invert else platform
+    active_settings.setdefault("columns_to_drop", {})[rule_name] = add_rule_vars
+    populate_rule_list(frame)
+    settings_save()
+
+def exclusion_rule_delete(frame, rule):
+    if active_settings is None:
+        return
+    
+    active_settings.setdefault("columns_to_drop", {}).pop(rule, None)
+    populate_rule_list(frame)
+    settings_save()
+
+def exclusion_rule_edit(frame, rule, column, value):    
+    if active_settings is None:
+        return
+    
+    cols_to_drop = active_settings.setdefault("columns_to_drop", {}).setdefault(rule, [])
+    if value:
+        if column not in cols_to_drop:
+            cols_to_drop.append(column)
+    else:
+        if column in cols_to_drop:
+            cols_to_drop.remove(column)
+    populate_rule_list(frame)
+    settings_save()
+
 def game_accept():
     if active_settings is None:
         handle_error("No settings available.")
@@ -134,18 +134,18 @@ def game_accept():
         return
     
     selected_title = active_title.get()
-    selected_platform = active_settings['platforms'][active_selections.get("platforms", tk.IntVar()).get()]
+    selected_platform = get_platform_key()
     selected_contents = active_settings['contents'][active_selections.get("contents", tk.IntVar()).get()]
     selected_format = active_settings['formats'][active_selections.get("formats", tk.IntVar()).get()]
     
     # Move the "The" to the end if the title starts with "The " and it's enabled in settings
-    if selected_title.startswith("The ") and active_settings['toggles'].get('use_the_suffix', True):
+    if selected_title.startswith("The ") and is_toggled('use_the_suffix'):
         selected_title = selected_title[4:] + ", The"
     
     contents = {}
     
     # Set case, sleeve, and manual based on content
-    if active_settings.get('toggles', {}).get('use_content_split', False):
+    if is_toggled('use_content_split'):
         contents['Case'] = 'Y' if selected_contents not in ["No Case", "Manual Only", "Sleeve Only", "Loose Disc", "Loose Cartridge", "Nothing"] else 'N'
         contents['Sleeve'] = 'Y' if selected_contents not in ["Case Only", "Manual Only", "No Sleeve", "Loose Disc", "Loose Cartridge", "Nothing"] else 'N'
         contents['Manual'] = 'Y' if selected_contents not in ["Case Only", "No Manual", "Loose Disc", "Loose Cartridge", "Nothing"] else 'N'
@@ -156,7 +156,7 @@ def game_accept():
     data = {
         "Title": [selected_title],
         "Release Date": [active_game_data.get('release_date')] if active_game_data.get('release_date') else "",
-        "Platform": active_settings['platform_mapping'][active_settings['platforms'][active_selections.get("platforms", tk.IntVar()).get()]] if active_settings['toggles'].get('use_full_platform_name', False) else active_settings['platforms'][active_selections.get("platforms", tk.IntVar()).get()],
+        "Platform": get_platform_name() if is_toggled('use_full_platform_name') else get_platform_key(),
         **contents,
         "Condition": active_settings['conditions'][active_selections.get("conditions", tk.IntVar()).get()],
         "Case Condition": active_settings['case_conditions'][active_selections.get("case_conditions", tk.IntVar()).get()],
@@ -197,7 +197,7 @@ def game_accept():
 
     df = pd.DataFrame(ordered_data)
 
-    write_to_file(df, active_settings["platforms"][active_selections.get("platforms", tk.IntVar()).get()])
+    write_to_file(df, get_platform_key())
     game_log(selected_title, selected_platform, active_game_data.get('release_date', ''), selected_format)
     game_clear()
     game_search_clear()
@@ -255,10 +255,20 @@ def get_contents():
         return None
     return active_settings["contents"][active_selections.get("contents", tk.IntVar()).get()]
 
+def get_platform_key():
+    if active_settings is None:
+        return None
+    return get_platforms()[active_selections["platforms"].get()]
+
+def get_platforms() -> list:
+    if active_settings is None:
+        return []
+    return list(active_settings["platforms"].keys())
+
 def get_platform_name():
     if active_settings is None:
         return None
-    return active_settings.get("platform_mapping", {}).get(active_settings["platforms"][active_selections.get("platforms", tk.IntVar()).get()]) or ""
+    return active_settings["platforms"][get_platform_key()]
 
 def handle_ellipsis(text, max_length=30):
     return text if len(text) <= max_length else text[:max_length-3] + "..."
@@ -319,10 +329,15 @@ def open_column_order_window():
     column_order_window.geometry("400x600")
     column_order_window.columnconfigure(0, weight=1)
     column_order_window.rowconfigure(0, weight=1)
-    column_order_window.rowconfigure(1, weight=1)
+
+    column_order_frame = ttk.LabelFrame(column_order_window, text="Column Order")
+    column_order_frame.grid(row=0, column=0, sticky="nsew", padx=4, pady=4)
+    column_order_frame.columnconfigure(0, weight=1)
+    column_order_frame.rowconfigure(0, weight=1)
+    column_order_frame.rowconfigure(1, weight=1)
 
     columns = active_settings.get("column_order", [])
-    column_listbox = tk.Listbox(column_order_window)
+    column_listbox = tk.Listbox(column_order_frame)
     column_listbox.config(font=("Consolas", 10))
     column_listbox.grid(row=0, column=0, rowspan=2, sticky="nsew", padx=4, pady=4)
     
@@ -361,11 +376,14 @@ def open_column_order_window():
         active_settings["column_order"] = columns
         settings_save()
 
-    up_button = ttk.Button(column_order_window, text="Move Up", command=move_up)
-    up_button.grid(row=0, column=1, sticky="nsew")
+    up_button = ttk.Button(column_order_frame, text="Move Up", command=move_up)
+    up_button.grid(row=0, column=1, sticky="nsew", padx=4, pady=4)
 
-    down_button = ttk.Button(column_order_window, text="Move Down", command=move_down)
-    down_button.grid(row=1, column=1, sticky="nsew")
+    down_button = ttk.Button(column_order_frame, text="Move Down", command=move_down)
+    down_button.grid(row=1, column=1, sticky="nsew", padx=4, pady=4)
+
+    close_button = ttk.Button(column_order_frame, text="Close", command=column_order_window.destroy)
+    close_button.grid(row=2, column=0, columnspan=2, sticky="nsew", padx=4, pady=4)
 
 def open_exclusion_window():
     global _exclusion_image_refs
@@ -373,27 +391,25 @@ def open_exclusion_window():
         return
     exclusion_window = tk.Toplevel()
     exclusion_window.title("Exclusion List")
-    exclusion_window.geometry("1000x500")
 
-    platforms = active_settings.get("platforms", [])
+    platforms = get_platforms()
     columns = active_settings.get("column_order", [])
-    cols_to_drop = active_settings.setdefault("columns_to_drop", {})
 
     exclusion_root_frame = ttk.Frame(exclusion_window)
-    exclusion_root_frame.grid(row=0, column=0, sticky="nsew")
+    exclusion_root_frame.grid(row=0, column=0, sticky="nsew", padx=4, pady=4)
 
     add_rule_frame = ttk.Labelframe(exclusion_root_frame, text="Add Exclusion Rule")
-    add_rule_frame.grid(row=0, column=0, sticky="nsew")
+    add_rule_frame.grid(row=0, column=0, sticky="nsew", padx=4, pady=4)
     add_rule_col = 0
 
     add_not_check_var = tk.BooleanVar(value=False)
     add_not_check = ttk.Checkbutton(add_rule_frame, text="NOT_", variable=add_not_check_var)
-    add_not_check.grid(row=1, column=add_rule_col, sticky=tk.W)
+    add_not_check.grid(row=1, column=add_rule_col, sticky=tk.W, padx=4, pady=4)
     add_rule_col += 1
 
     add_platform_var = tk.StringVar(value=platforms[0] if platforms else "")
     add_platform_menu = ttk.OptionMenu(add_rule_frame, add_platform_var, add_platform_var.get(), *platforms)
-    add_platform_menu.grid(row=1, column=add_rule_col, sticky=tk.W)
+    add_platform_menu.grid(row=1, column=add_rule_col, sticky=tk.W, padx=4, pady=4)
     add_rule_col += 1
 
     add_rule_vars = []
@@ -409,11 +425,101 @@ def open_exclusion_window():
         add_rule_col += 1
 
     add_rule_button = ttk.Button(add_rule_frame, text="Add Rule", command=lambda: exclusion_rule_add(list_rule_frame, add_platform_var.get(), add_rule_vars, invert=add_not_check_var.get()))
-    add_rule_button.grid(row=1, column=add_rule_col, sticky="nsew")
+    add_rule_button.grid(row=1, column=add_rule_col, sticky="nsew", padx=4, pady=4)
 
     list_rule_frame = ttk.Labelframe(exclusion_root_frame, text="Current Rules")
-    list_rule_frame.grid(row=1, column=0, sticky="nsew")
+    list_rule_frame.grid(row=1, column=0, sticky="nsew", padx=4, pady=4)
     populate_rule_list(list_rule_frame)
+
+    close_rules_button = ttk.Button(exclusion_root_frame, text="Close", command=exclusion_window.destroy)
+    close_rules_button.grid(row=2, column=0, sticky="nsew", padx=4, pady=4)
+
+def open_platform_mapping_window(platform_list=None):
+    if active_settings is None:
+        return
+    
+    platform_mapping_window = tk.Toplevel()
+    platform_mapping_window.title("Edit Platform Mapping")
+    platform_mapping_window.columnconfigure(0, weight=1)
+    platform_mapping_window.rowconfigure(0, weight=1)
+
+    frame = ttk.LabelFrame(platform_mapping_window, text="Platform Mapping")
+    frame.grid(row=0, column=0, sticky="nsew", padx=4, pady=4)
+    frame.columnconfigure(0, weight=1)
+    frame.columnconfigure(1, weight=3)
+
+    pmlabel = ttk.Label(frame, text="Key is what appears in the selection. Name must match the tag on Mobygames.")
+    pmlabel.grid(row=0, column=0, columnspan=2, sticky="w", pady=(8, 8))
+
+    columns = ["Key", "Name"]
+    for j, col in enumerate(columns):
+        label = ttk.Label(frame, text=col)
+        label.grid(row=1, column=j, sticky="nsew", padx=2, pady=2)
+    
+    def pm_add():
+        if active_settings is None:
+            return
+        
+        new_key = f"Platform{len(active_settings['platforms'])+1}"
+        active_settings["platforms"][new_key] = new_key
+        pm_save(entries=entries)
+        platform_mapping_window.destroy()
+        open_platform_mapping_window()
+
+    def pm_close():
+        pm_save(entries=entries)
+        platform_mapping_window.destroy()
+
+    def pm_remove(key):
+        if active_settings is None:
+            return
+        active_settings["platforms"].pop(key, None)
+        pm_save(entries=entries)
+        platform_mapping_window.destroy()
+        open_platform_mapping_window()
+
+    def pm_save(event=None, entries=None):
+        if active_settings is None or entries is None:
+            return
+        new_platforms = {}
+        for k, (key_entry, name_entry) in entries.items():
+            new_platforms[key_entry.get().strip() or k] = name_entry.get().strip() or key_entry.get().strip() or k
+        active_settings["platforms"] = new_platforms
+        # Update the platform list in the main settings
+        if platform_list is not None:
+            platform_list.set("; ".join(get_platforms()))
+        settings_save()
+
+    entries = {}
+    platforms = get_platforms()
+    for i, key in enumerate(platforms, start=2):
+        name = active_settings["platforms"].get(key, key)
+        key_entry = ttk.Entry(frame)
+        key_entry.grid(row=i, column=0, sticky="nsew", padx=2, pady=2)
+        key_entry.insert(0, key)
+
+        name_entry = ttk.Entry(frame)
+        name_entry.grid(row=i, column=1, sticky="nsew", padx=2, pady=2)
+        name_entry.insert(0, name)
+
+        entries[key] = (key_entry, name_entry)
+
+        pmremovebutton = ttk.Button(frame, text="Delete", command=lambda k=key: pm_remove(k))
+        pmremovebutton.grid(row=i, column=2, sticky="nsew", padx=2, pady=2)
+
+        name_entry.bind("<FocusOut>", lambda event, e=entries: pm_save(event, e))
+        name_entry.bind("<Return>", lambda event, e=entries: pm_save(event, e))
+        key_entry.bind("<FocusOut>", lambda event, e=entries: pm_save(event, e))
+        key_entry.bind("<Return>", lambda event, e=entries: pm_save(event, e))
+
+    pmactionsframe = ttk.Frame(frame)
+    pmactionsframe.grid(row=i+1, column=0, columnspan=3, sticky="nsew", padx=2, pady=2)
+    pmactionsframe.columnconfigure(0, weight=1)
+    pmactionsframe.columnconfigure(1, weight=1)
+    pmaddbutton = ttk.Button(pmactionsframe, text="Add Platform", command=lambda: pm_add())
+    pmaddbutton.grid(row=0, column=0, sticky="nsew", padx=2, pady=2)
+    pmclosebutton = ttk.Button(pmactionsframe, text="Close", command=pm_close)
+    pmclosebutton.grid(row=0, column=1, sticky="nsew", padx=2, pady=2)
 
 def populate_rule_list(frame):
     if active_settings is None:
@@ -432,11 +538,11 @@ def populate_rule_list(frame):
 
         not_var = tk.BooleanVar(value=invert)
         not_check = ttk.Checkbutton(frame, text="NOT_", variable=not_var)
-        not_check.grid(row=i, column=0, sticky="nw")
+        not_check.grid(row=i, column=0, sticky="nw", padx=4, pady=4)
 
         rule_platform = tk.StringVar(value=rule_name)
-        rule_platform_menu = ttk.OptionMenu(frame, rule_platform, rule_platform.get(), *active_settings.get("platforms", []))
-        rule_platform_menu.grid(row=i, column=1, sticky="nw")
+        rule_platform_menu = ttk.OptionMenu(frame, rule_platform, rule_platform.get(), *get_platforms())
+        rule_platform_menu.grid(row=i, column=1, sticky="nw", padx=4, pady=4)
 
         for j, col in enumerate(columns, start=2):
             var = tk.BooleanVar(value=col in drop_col)
@@ -445,7 +551,7 @@ def populate_rule_list(frame):
             var.trace_add("write", lambda *args, rk=rule, c=col, v=var: exclusion_rule_edit(frame, rk, c, v.get()))
 
         rule_delete_button = ttk.Button(frame, text="Delete", command=lambda r=rule: exclusion_rule_delete(frame, r))
-        rule_delete_button.grid(row=i, column=j+1, sticky="nsew")
+        rule_delete_button.grid(row=i, column=j+1, sticky="nsew", padx=4, pady=4)
 
 def populate_menu(frame, name, options):
     # Populate a menu with the given options
@@ -562,9 +668,8 @@ def recall_log_item(event=None):
         handle_error("Settings file is missing")
         return
 
-    toggles = active_settings.get("toggles", {})
-    use_xls = toggles.get("use_xls", False)
-    xls_collate = toggles.get("use_xls_collate_sheets", False)
+    use_xls = is_toggled('use_xls')
+    xls_collate = is_toggled('use_xls_collate_sheets')
 
     if use_xls:
         file_name = "scanned_collection.xlsx" if xls_collate else f"{platform}_scanned_collection.xlsx"
@@ -624,12 +729,10 @@ def scrape_data_release_date(soup):
     if active_settings is None:
         return
     # Get the actual platform name from the selected_platform abbreviation
-    platform_mapping = active_settings.get("platform_mapping", {})
-    selected_index = active_selections.get("platforms", tk.IntVar()).get()
-    selected_abbrev = active_settings["platforms"][selected_index]
-    actual_platform = platform_mapping.get(selected_abbrev, None)
+    selected_abbrev = get_platform_key()
+    actual_platform = get_platform_name()
     if not actual_platform:
-        handle_error(f"Unknown platform abbreviation '{selected_abbrev}'")
+        handle_error(f"Missing platform abbreviation for '{selected_abbrev}'")
         return None
 
     platform_soup = soup.find('ul', id='platformLinks')
@@ -772,7 +875,7 @@ def scrape_dx(specs, dict={}):
         dx_version = re.search(r'\d+(\.\d+)?[a-zA-Z]*$', dx_version)
         dx_version = dx_version.group() if dx_version else None
 
-        if dx_version and active_settings and active_settings.get("toggles", {}).get("use_dx_point_drop", False):
+        if dx_version and active_settings and is_toggled("use_dx_point_drop"):
             dx_version = re.sub(r'\..*$', '', dx_version)
 
         print(f"Debug: DirectX Version: {dx_version}")
@@ -844,7 +947,7 @@ def scrape_price_pricecharting(barcode):
         return None, None
     
     # Find the row that contains the platform name
-    use_pal = active_settings.get("toggles", {}).get("use_pal", False)
+    use_pal = is_toggled("use_pal")
     text_to_find = "pal " + platform_name.lower() if use_pal else platform_name.lower()
     platform_text = price_soup.find_all('a', string=lambda text: text and (text_to_find in text.lower()))
     platform_row = platform_text[0].find_parent('tr') if platform_text else None
@@ -1095,7 +1198,7 @@ def settings_set_defaults(platform_index:int = 0):
 
     # Get all the defaults for the selected platform, or use the "Default" defaults if the platform is not found
     platform_settings = active_settings.get("platform_defaults", {})
-    platform_name = active_settings["platforms"][platform_index]
+    platform_name = get_platform_name()
     platform_defaults = platform_settings.get(platform_name, platform_settings.get("Default", {}))
 
     for setting, value in platform_defaults.items():
@@ -1125,17 +1228,21 @@ def update_choices(choiceentries = None, changes=False):
     if choiceentries is None:
         choiceentries = {}
 
-    for choice, entry in choiceentries.items():
-        # Get the text in the entry and split it by semicolons
-        text = entry.get()
-        choices = [t.strip() for t in text.split(";") if t.strip()]
-
-        # Update the corresponding settings value based on the entry
-        if active_settings.get(choice) == choices:
+    for context, entry in choiceentries.items():
+        if context == "platforms":
+            # We save the changes for platforms elsewhere, so always assume there are changes
+            changes = True
             continue
 
-        active_settings[choice] = choices
-        changes = True
+        if context != "platforms":
+            # Get the text in the entry and split it by semicolons
+            text = entry.get()
+            choices = [t.strip() for t in text.split(";") if t.strip()]
+            if active_settings.get(context) == choices:
+                continue
+
+            active_settings[context] = choices
+            changes = True
 
     if not changes:
         return
@@ -1273,13 +1380,13 @@ def write_to_file(data, platform):
 
     file_name = f"{platform}_scanned_collection.csv"
     # Toggle whether to write xls to a single file with tabs or separate files
-    if active_settings['toggles'].get('use_xls', False):
-        file_name = f"{platform}_scanned_collection.xlsx" if not active_settings['toggles'].get('use_xls_collate_sheets', False) else "scanned_collection.xlsx"
-    clipboard = active_settings['toggles'].get('use_clipboard', True)
+    if is_toggled('use_xls'):
+        file_name = f"{platform}_scanned_collection.xlsx" if not is_toggled('use_xls_collate_sheets') else "scanned_collection.xlsx"
+    clipboard = is_toggled('use_clipboard')
 
     # Read the existing file and make sure the platform sheet exists if using xls
     file_exists = os.path.isfile(file_name)
-    use_xls = active_settings['toggles'].get('use_xls', False)
+    use_xls = is_toggled('use_xls')
     existing = pd.DataFrame()
     if file_exists:
         if use_xls:
@@ -1291,7 +1398,7 @@ def write_to_file(data, platform):
 
     # Make sure the headers are right
     combined, new_reindexed = write_new_headers(data, existing)
-    use_split = active_settings.get('toggles', {}).get('use_content_split', False)
+    use_split = is_toggled('use_content_split')
     if use_split:
         combined = combined.drop(columns=['Contents'], errors='ignore')
         new_reindexed = new_reindexed.drop(columns=['Contents'], errors='ignore')
@@ -1332,7 +1439,7 @@ def main():
     root.rowconfigure(0, weight=1)
 
     style = ttk.Style(root)
-    if active_settings['toggles'].get('use_custom_ttk_theme', False):
+    if is_toggled('use_custom_ttk_theme'):
         style.theme_use(active_settings['theming'].get('ttk_theme', 'default'))
     even_bg = active_settings["theming"]["custom_colors"]["row_even_bg"]
     odd_bg = active_settings["theming"]["custom_colors"]["row_odd_bg"]
@@ -1340,11 +1447,11 @@ def main():
     style.configure("InfoDataOdd.TLabel", background=odd_bg)
 
     main_notebook = ttk.Notebook(root)
-    main_notebook.grid(row=0, column=0, sticky="nsew")
+    main_notebook.grid(row=0, column=0, sticky="nsew", padx=4, pady=4)
 
     mainrow = 0
     mainframe = ttk.Frame(main_notebook, padding="8")
-    mainframe.grid(row=0, column=0, sticky=tk.N+tk.S+tk.E+tk.W)
+    mainframe.grid(row=0, column=0, sticky="nsew")
 
     contextrow = 0
     contextframe = ttk.LabelFrame(mainframe, text="Physical State", padding="8")
@@ -1398,7 +1505,8 @@ def main():
     mainrow += 1
 
     for key, frame in contextlist:
-        populate_menu(frame, key, active_settings[key])
+        options = get_platforms() if key == "platforms" else active_settings.get(key, [])
+        populate_menu(frame, key, options)
     update_info_frame()
 
     logframe = ttk.LabelFrame(mainframe, text="Log", padding="2")
@@ -1442,7 +1550,7 @@ def main():
 
     # Setup Tab where the user can set edit the settings.json file
     setup_tab = ttk.Frame(main_notebook, padding="8")
-    setup_tab.columnconfigure(1, weight=1)
+    setup_tab.columnconfigure(0, weight=1)
     setuprow = 0
     choiceentries = {}
 
@@ -1455,74 +1563,70 @@ def main():
 
     splatformslabel = ttk.Label(choicesframe, text="Platforms:")
     splatformslabel.grid(row=choicesrow, column=0, sticky=tk.W)
-    splatformsstringvar = tk.StringVar(value="; ".join(active_settings.get("platforms", [])))
-    splatformsentry = ttk.Entry(choicesframe)
+    splatformsstringvar = tk.StringVar(value="; ".join(get_platforms()))
+    splatformsentry = ttk.Label(choicesframe, textvariable=splatformsstringvar, relief=tk.SUNKEN)
     splatformsentry.grid(row=choicesrow, column=1, sticky=tk.W+tk.E)
-    splatformsentry.config(textvariable=splatformsstringvar)
-    choiceentries["platforms"] = splatformsentry
+    splatformseditbutton = ttk.Button(choicesframe, text="Edit", command=lambda: open_platform_mapping_window(splatformsstringvar))
+    splatformseditbutton.grid(row=choicesrow, column=2, sticky=tk.W)
+    choiceentries["platforms"] = splatformsstringvar
     choicesrow += 1
 
     sformatslabel = ttk.Label(choicesframe, text="Formats:")
     sformatslabel.grid(row=choicesrow, column=0, sticky=tk.W)
     sformatsentrystringvar = tk.StringVar(value="; ".join(active_settings.get("formats", [])))
-    sformatsentry = ttk.Entry(choicesframe)
+    sformatsentry = ttk.Entry(choicesframe, textvariable=sformatsentrystringvar)
     sformatsentry.grid(row=choicesrow, column=1, sticky=tk.W+tk.E)
-    sformatsentry.config(textvariable=sformatsentrystringvar)
-    choiceentries["formats"] = sformatsentry
+    choiceentries["formats"] = sformatsentrystringvar
     choicesrow += 1
 
     sconditionslabel = ttk.Label(choicesframe, text="Conditions:")
     sconditionslabel.grid(row=choicesrow, column=0, sticky=tk.W)
     sconditionsstringvar = tk.StringVar(value="; ".join(active_settings.get("conditions", [])))
-    sconditionsentry = ttk.Entry(choicesframe)
+    sconditionsentry = ttk.Entry(choicesframe, textvariable=sconditionsstringvar)
     sconditionsentry.grid(row=choicesrow, column=1, sticky=tk.W+tk.E)
-    sconditionsentry.config(textvariable=sconditionsstringvar)
-    choiceentries["conditions"] = sconditionsentry
+    choiceentries["conditions"] = sconditionsstringvar
     choicesrow += 1
 
     scaseconditionslabel = ttk.Label(choicesframe, text="Case Conditions:")
     scaseconditionslabel.grid(row=choicesrow, column=0, sticky=tk.W)
     scaseconditionsstringvar = tk.StringVar(value="; ".join(active_settings.get("case_conditions", [])))
-    scaseconditionsentry = ttk.Entry(choicesframe)
+    scaseconditionsentry = ttk.Entry(choicesframe, textvariable=scaseconditionsstringvar)
     scaseconditionsentry.grid(row=choicesrow, column=1, sticky=tk.W+tk.E)
-    scaseconditionsentry.config(textvariable=scaseconditionsstringvar)
-    choiceentries["case_conditions"] = scaseconditionsentry
+    choiceentries["case_conditions"] = scaseconditionsstringvar
     choicesrow += 1
 
     scontentslabel = ttk.Label(choicesframe, text="Contents:")
     scontentslabel.grid(row=choicesrow, column=0, sticky=tk.W)
     scontentsstringvar = tk.StringVar(value="; ".join(active_settings.get("contents", [])))
-    scontentsentry = ttk.Entry(choicesframe)
+    scontentsentry = ttk.Entry(choicesframe, textvariable=scontentsstringvar)
     scontentsentry.grid(row=choicesrow, column=1, sticky=tk.W+tk.E)
-    scontentsentry.config(textvariable=scontentsstringvar)
-    choiceentries["contents"] = scontentsentry
+    choiceentries["contents"] = scontentsstringvar
     choicesrow += 1
 
     seditionslabel = ttk.Label(choicesframe, text="Editions:")
     seditionslabel.grid(row=choicesrow, column=0, sticky=tk.W)
     seditionsstringvar = tk.StringVar(value="; ".join(active_settings.get("editions", [])))
-    seditionsentry = ttk.Entry(choicesframe)
+    seditionsentry = ttk.Entry(choicesframe, textvariable=seditionsstringvar)
     seditionsentry.grid(row=choicesrow, column=1, sticky=tk.W+tk.E)
-    seditionsentry.config(textvariable=seditionsstringvar)
-    choiceentries["editions"] = seditionsentry
+    choiceentries["editions"] = seditionsstringvar
     choicesrow += 1
 
     exclusionframe = ttk.LabelFrame(setup_tab, text="Columns", padding="8")
     exclusionframe.grid(row=setuprow, column=0, sticky=tk.W+tk.E)
+    exclusionframe.columnconfigure(0, weight=1)
     exclusionframe.columnconfigure(1, weight=1)
     frames_padded.append(exclusionframe)
     setuprow += 1
 
     eexcludebutton = ttk.Button(exclusionframe, text="Edit Columns Per Platform", command=lambda: open_exclusion_window())
-    eexcludebutton.grid(row=0, column=1, sticky=tk.W)
+    eexcludebutton.grid(row=0, column=0, sticky="nsew")
 
     eorderbutton = ttk.Button(exclusionframe, text="Edit Column Order", command=lambda: open_column_order_window())
-    eorderbutton.grid(row=0, column=3, sticky=tk.W)
+    eorderbutton.grid(row=0, column=1, sticky="nsew")
 
     # Display all the toggles from the settings file
     togglesframe = ttk.LabelFrame(setup_tab, text="Toggles", padding="8")
     togglesframe.grid(row=setuprow, column=0, sticky=tk.W+tk.E)
-    togglesframe.columnconfigure(1, weight=1)
     frames_padded.append(togglesframe)
     setuprow += 1
     populate_toggles(togglesframe)

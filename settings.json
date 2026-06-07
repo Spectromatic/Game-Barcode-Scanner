@@ -1,5 +1,5 @@
 {
-    "platform_mapping": {
+    "platforms": {
         "PC": "Windows",
         "PS1": "PlayStation",
         "PS2": "PlayStation 2",
@@ -11,23 +11,11 @@
         "DS": "Nintendo DS",
         "3DS": "Nintendo 3DS",
         "GB": "Game Boy",
-        "GC": "GameCube"
+        "GC": "GameCube",
+        "XBOX360": "Xbox 360",
+        "XBOX": "Xbox",
+        "GBA": "Game Boy Advance"
     },
-    "platforms": [
-        "PC",
-        "PS1",
-        "PS2",
-        "PS3",
-        "PS4",
-        "PSP",
-        "Switch",
-        "Wii",
-        "DS",
-        "3DS",
-        "GB",
-        "GC",
-        "XBOX360"
-    ],
     "formats": [
         "CD",
         "DVD",
