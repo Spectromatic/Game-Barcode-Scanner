@@ -310,6 +310,63 @@ def modify_color(hex_color: str, amount: float) -> str:
     nr, ng, nb = colorsys.hsv_to_rgb(h, s, new_v)
     return "#{:02x}{:02x}{:02x}".format(int(round(nr*255)), int(round(ng*255)), int(round(nb*255)))
 
+def open_column_order_window():
+    if active_settings is None:
+        return
+    
+    column_order_window = tk.Toplevel()
+    column_order_window.title("Change Column Order")
+    column_order_window.geometry("400x600")
+    column_order_window.columnconfigure(0, weight=1)
+    column_order_window.rowconfigure(0, weight=1)
+    column_order_window.rowconfigure(1, weight=1)
+
+    columns = active_settings.get("column_order", [])
+    column_listbox = tk.Listbox(column_order_window)
+    column_listbox.config(font=("Consolas", 10))
+    column_listbox.grid(row=0, column=0, rowspan=2, sticky="nsew", padx=4, pady=4)
+    
+    for col in columns:
+        column_listbox.insert(tk.END, col)
+
+    def move_up():
+        selected = column_listbox.curselection()
+        if not selected or selected[0] == 0:
+            return
+        idx = selected[0]
+        columns[idx-1], columns[idx] = columns[idx], columns[idx-1]
+        column_listbox.delete(0, tk.END)
+        for col in columns:
+            column_listbox.insert(tk.END, col)
+        column_listbox.select_set(idx-1)
+        
+        if active_settings is None:
+            return
+        active_settings["column_order"] = columns
+        settings_save()
+
+    def move_down():
+        selected = column_listbox.curselection()
+        if not selected or selected[0] == len(columns) - 1:
+            return
+        idx = selected[0]
+        columns[idx+1], columns[idx] = columns[idx], columns[idx+1]
+        column_listbox.delete(0, tk.END)
+        for col in columns:
+            column_listbox.insert(tk.END, col)
+        column_listbox.select_set(idx+1)
+        
+        if active_settings is None:
+            return
+        active_settings["column_order"] = columns
+        settings_save()
+
+    up_button = ttk.Button(column_order_window, text="Move Up", command=move_up)
+    up_button.grid(row=0, column=1, sticky="nsew")
+
+    down_button = ttk.Button(column_order_window, text="Move Down", command=move_down)
+    down_button.grid(row=1, column=1, sticky="nsew")
+
 def open_exclusion_window():
     global _exclusion_image_refs
     if active_settings is None:
@@ -1450,16 +1507,17 @@ def main():
     choiceentries["editions"] = seditionsentry
     choicesrow += 1
 
-    exclusionframe = ttk.LabelFrame(setup_tab, text="Exclusions", padding="8")
+    exclusionframe = ttk.LabelFrame(setup_tab, text="Columns", padding="8")
     exclusionframe.grid(row=setuprow, column=0, sticky=tk.W+tk.E)
     exclusionframe.columnconfigure(1, weight=1)
     frames_padded.append(exclusionframe)
     setuprow += 1
-    
-    eexcludelabel = ttk.Label(exclusionframe, text="Exclude Columns:")
-    eexcludelabel.grid(row=0, column=0, sticky=tk.W)
+
     eexcludebutton = ttk.Button(exclusionframe, text="Edit Columns Per Platform", command=lambda: open_exclusion_window())
     eexcludebutton.grid(row=0, column=1, sticky=tk.W)
+
+    eorderbutton = ttk.Button(exclusionframe, text="Edit Column Order", command=lambda: open_column_order_window())
+    eorderbutton.grid(row=0, column=3, sticky=tk.W)
 
     # Display all the toggles from the settings file
     togglesframe = ttk.LabelFrame(setup_tab, text="Toggles", padding="8")
