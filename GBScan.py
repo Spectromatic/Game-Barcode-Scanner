@@ -324,7 +324,7 @@ def open_column_order_window():
     if active_settings is None:
         return
     
-    column_order_window = tk.Toplevel()
+    column_order_window = tk.Toplevel(class_="GBScan")
     column_order_window.title("GBScan - Change Column Order")
     column_order_window.geometry("400x600")
     column_order_window.columnconfigure(0, weight=1)
@@ -389,7 +389,7 @@ def open_exclusion_window():
     global _exclusion_image_refs
     if active_settings is None:
         return
-    exclusion_window = tk.Toplevel()
+    exclusion_window = tk.Toplevel(class_="GBScan")
     exclusion_window.title("GBScan - Exclusion List")
 
     platforms = get_platforms()
@@ -438,7 +438,7 @@ def open_platform_mapping_window(platform_list=None):
     if active_settings is None:
         return
     
-    platform_mapping_window = tk.Toplevel()
+    platform_mapping_window = tk.Toplevel(class_="GBScan")
     platform_mapping_window.title("GBScan - Edit Platform Mapping")
     platform_mapping_window.columnconfigure(0, weight=1)
     platform_mapping_window.rowconfigure(0, weight=1)
@@ -1433,7 +1433,7 @@ def main():
         handle_error("No settings available.")
         return
 
-    root = tk.Tk()
+    root = tk.Tk(className="GBScan")
     root.title("GBScan")
     root.columnconfigure(0, weight=1)
     root.rowconfigure(0, weight=1)
