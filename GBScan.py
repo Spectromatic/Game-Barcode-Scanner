@@ -33,7 +33,7 @@ logframe = None
 logtree = None
 _exclusion_image_refs = []
 
-def add_exclusion_rule(frame, platform, add_rule_vars, invert=False):
+def exclusion_rule_add(frame, platform, add_rule_vars, invert=False):
     if active_settings is None:
         return
     
@@ -42,6 +42,14 @@ def add_exclusion_rule(frame, platform, add_rule_vars, invert=False):
     
     rule_name = f"NOT_{platform}" if invert else platform
     active_settings.setdefault("columns_to_drop", {})[rule_name] = add_rule_vars
+    populate_rule_list(frame)
+    settings_save()
+
+def exclusion_rule_delete(frame, rule):
+    if active_settings is None:
+        return
+    
+    active_settings.setdefault("columns_to_drop", {}).pop(rule, None)
     populate_rule_list(frame)
     settings_save()
 
@@ -329,7 +337,7 @@ def open_exclusion_window():
         add_rule_vars.append((col, var))
         add_rule_col += 1
 
-    add_rule_button = ttk.Button(add_rule_frame, text="Add Rule", command=lambda: add_exclusion_rule(list_rule_frame, add_platform_var.get(), add_rule_vars, invert=add_not_check_var.get()))
+    add_rule_button = ttk.Button(add_rule_frame, text="Add Rule", command=lambda: exclusion_rule_add(list_rule_frame, add_platform_var.get(), add_rule_vars, invert=add_not_check_var.get()))
     add_rule_button.grid(row=1, column=add_rule_col, sticky="nsew")
 
     list_rule_frame = ttk.Labelframe(exclusion_root_frame, text="Current Rules")
@@ -363,6 +371,9 @@ def populate_rule_list(frame):
             var = tk.BooleanVar(value=col in drop_col)
             chk = ttk.Checkbutton(frame, variable=var)
             chk.grid(row=i, column=j, sticky="nsew")
+
+        rule_delete_button = ttk.Button(frame, text="Delete", command=lambda r=rule: exclusion_rule_delete(frame, r))
+        rule_delete_button.grid(row=i, column=j+1, sticky="nsew")
 
 def populate_menu(frame, name, options):
     # Populate a menu with the given options
