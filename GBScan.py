@@ -53,6 +53,20 @@ def exclusion_rule_delete(frame, rule):
     populate_rule_list(frame)
     settings_save()
 
+def exclusion_rule_edit(frame, rule, column, value):    
+    if active_settings is None:
+        return
+    
+    cols_to_drop = active_settings.setdefault("columns_to_drop", {}).setdefault(rule, [])
+    if value:
+        if column not in cols_to_drop:
+            cols_to_drop.append(column)
+    else:
+        if column in cols_to_drop:
+            cols_to_drop.remove(column)
+    populate_rule_list(frame)
+    settings_save()
+
 def button_focus_accept():
     global acceptbutton
     if acceptbutton is not None and acceptbutton.instate(['!disabled']):
@@ -371,6 +385,7 @@ def populate_rule_list(frame):
             var = tk.BooleanVar(value=col in drop_col)
             chk = ttk.Checkbutton(frame, variable=var)
             chk.grid(row=i, column=j, sticky="nsew")
+            var.trace_add("write", lambda *args, rk=rule, c=col, v=var: exclusion_rule_edit(frame, rk, c, v.get()))
 
         rule_delete_button = ttk.Button(frame, text="Delete", command=lambda r=rule: exclusion_rule_delete(frame, r))
         rule_delete_button.grid(row=i, column=j+1, sticky="nsew")
