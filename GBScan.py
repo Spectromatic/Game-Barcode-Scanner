@@ -1198,8 +1198,8 @@ def settings_set_defaults(platform_index:int = 0):
 
     # Get all the defaults for the selected platform, or use the "Default" defaults if the platform is not found
     platform_settings = active_settings.get("platform_defaults", {})
-    platform_name = get_platform_name()
-    platform_defaults = platform_settings.get(platform_name, platform_settings.get("Default", {}))
+    platform_key = get_platform_key()
+    platform_defaults = platform_settings.get(platform_key, platform_settings.get("Default", {}))
 
     for setting, value in platform_defaults.items():
         if isinstance(active_selections.get(setting), tk.IntVar):
@@ -1669,7 +1669,7 @@ def main():
         for child in frame.winfo_children():
             child.grid_configure(padx=4, pady=4)
 
-    settings_set_defaults()
+    root.after(0, settings_set_defaults)
     root.mainloop()
 
 if __name__ == "__main__":
