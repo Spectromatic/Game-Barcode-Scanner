@@ -277,6 +277,35 @@ def handle_error(message):
     # Display the error message in a message box
     messagebox.showerror("Error", message)
 
+def handle_missing_upc(parent, row, column, initial_text = ""):
+    entry = ttk.Entry(parent)
+    entry.grid(row=row, column=column, sticky="nsew")
+    entry.insert(0, initial_text)
+    entry.focus_set()
+    def on_submit(event=None):
+        upc = entry.get().strip()
+        if is_upc(upc):
+            active_physical_data['upc'] = upc
+        else:
+            active_physical_data['upc'] = ''
+        update_info_frame()
+
+    entry.bind("<Return>", on_submit)
+    entry.bind("<FocusOut>", on_submit)
+    entry.bind("<Escape>", lambda e: (active_physical_data.update({'upc': ''}), update_info_frame()))
+
+def handle_missing_upc_shortcut(event=None):
+    if infoframe is None:
+        return
+    
+    # Find the row with the UPC entry
+    for child in infoframe.winfo_children():
+        if isinstance(child, ttk.Button) and child.cget("text") == "Add UPC":
+            child.invoke()
+            return "break"
+    
+    return None
+
 def handle_single_option(options):
     # Handle the case where there is only one option available
     if not options:
@@ -1125,6 +1154,7 @@ def search_game(query):
         active_physical_data['upc'] = scrape_upc(item_link)
         print(f"Debug: Scraped UPC: {active_physical_data['upc']}")
     else:
+        active_physical_data.setdefault('upc', '')
         print("Debug: No UPC found from search query or item page.")
     update_button_states("normal")
     update_info_frame()
@@ -1334,8 +1364,14 @@ def update_info_frame():
         suffix = ":" if key else ""
         data_label = ttk.Label(infoframe, text=handle_ellipsis(f"{key.capitalize()}{suffix}"), style=f"InfoData{'Even' if (k + active_physical_data_offset) % 2 == 0 else 'Odd'}.TLabel")
         data_label.grid(row=k + active_physical_data_offset, column=4, sticky="nsew")
-        value_label = ttk.Label(infoframe, text=handle_ellipsis(f"{value}"), style=f"InfoData{'Even' if (k + active_physical_data_offset) % 2 == 0 else 'Odd'}.TLabel")
-        value_label.grid(row=k + active_physical_data_offset, column=5, sticky="nsew")
+        if key and key.lower() == 'upc' and not value:
+            row = k + active_physical_data_offset
+            add_btn = ttk.Button(infoframe, text="Add UPC", command=lambda r=row: handle_missing_upc(infoframe, r, 5))
+            add_btn.config(padding=(0, 0))
+            add_btn.grid(row=row, column=5, sticky="nsew")
+        else:
+            value_label = ttk.Label(infoframe, text=handle_ellipsis(f"{value}"), style=f"InfoData{'Even' if (k + active_physical_data_offset) % 2 == 0 else 'Odd'}.TLabel")
+            value_label.grid(row=k + active_physical_data_offset, column=5, sticky="nsew")
 
     cols, rows = infoframe.grid_size()
     for col in range(cols):
@@ -1653,6 +1689,7 @@ def main():
     root.bind_all('<N>', handle_decline_key)
     root.bind_all('<Delete>', handle_decline_key)
     root.bind_all('<Control-q>', lambda event: root.quit())
+    root.bind_all('<Insert>', handle_missing_upc_shortcut)
     if searchentry is not None:
         root.bind_all('<Control-a>', button_select_all)
 
