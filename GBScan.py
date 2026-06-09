@@ -1675,11 +1675,11 @@ def main():
     # Make the search entry focused when the application starts
     searchentry.focus()
     def handle_accept_key(event):
-        if root.focus_get() != searchentry and acceptbutton is not None and acceptbutton['state'] == 'normal':
+        if root.focus_get() != searchentry and acceptbutton is not None and acceptbutton.instate(['!disabled']):
             acceptbutton.invoke()
 
     def handle_decline_key(event):
-        if root.focus_get() != searchentry and declinebutton is not None and declinebutton['state'] == 'normal':
+        if root.focus_get() != searchentry and declinebutton is not None and declinebutton.instate(['!disabled']):
             declinebutton.invoke()
 
     logtree.bind("<Double-1>", recall_log_item)
