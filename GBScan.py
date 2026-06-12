@@ -596,7 +596,8 @@ def populate_menu(frame, name, options):
     label = ttk.Label(frame, text=label_text, width=label_width, anchor=tk.W)
     label.pack(side=tk.LEFT, padx=4)
     
-    var = tk.IntVar(value=0)
+    existing_var = active_selections.get(name)
+    var = existing_var if existing_var else tk.IntVar(value=0)
     active_selections[name] = var
     buttons = []
 
@@ -632,7 +633,10 @@ def populate_menu(frame, name, options):
         btn.pack(side=tk.LEFT)
         buttons.append(btn)
 
-    on_change()
+    # Sync button visuals without calling selections_update
+    current = var.get()
+    for i, btn in enumerate(buttons):
+        btn.state(['pressed'] if i == current else ['!pressed'])
 
 def populate_selections(frame, i, offset, current_selection, value, key, label_col, btn_col):
     active_selection = tk.StringVar(value=current_selection if current_selection is not None and current_selection in value else value[0])
@@ -910,7 +914,7 @@ def scrape_dx(specs, dict={}):
         print(f"Debug: DirectX Version: {dx_version}")
         dict['DX'] = 'DX' + dx_version if dx_version else 'Unknown'
 
-def scrape_prices(game_url, ):
+def scrape_prices(game_url):
     game_url = f"{game_url}/stores"
     response = requests.get(game_url)
     soup = bs.BeautifulSoup(response.text, 'html.parser')
@@ -1181,9 +1185,10 @@ def selections_update(name, value):
     if name in ("conditions", "contents"):
         new_condition = (active_physical_data.get("condition") or "").lower()
         new_content = (active_physical_data.get("content") or "").lower()
-        should_refetch = (name == "conditions" and ("sealed" in new_condition or ("sealed" in old_condition and "sealed" not in new_condition))) or (name == "contents" and ("loose" in new_content or ("loose" in old_content and "loose" not in new_content)))
+        should_refetch = (name == "conditions" and (("sealed" in new_condition and "sealed" not in old_condition) or ("sealed" in old_condition and "sealed" not in new_condition))) or (name == "contents" and (("loose" in new_content and "loose" not in old_content) or ("loose" in old_content and "loose" not in new_content)))
         price = None
         if should_refetch:
+            print(f"Debug: Refetching prices due to change in condition/content. Old Condition: {old_condition}, New Condition: {new_condition}, Old Content: {old_content}, New Content: {new_content}")
             price, _ = scrape_price_pricecharting(active_physical_data.get("upc") or active_game_data.get("title", [None])[0])
 
         if price is not None:
