@@ -146,9 +146,9 @@ def game_accept():
     
     # Set case, sleeve, and manual based on content
     if is_toggled('use_content_split'):
-        contents['Case'] = 'Y' if selected_contents not in ["No Case", "Manual Only", "Sleeve Only", "Loose Disc", "Loose Cartridge", "Nothing"] else 'N'
-        contents['Sleeve'] = 'Y' if selected_contents not in ["Case Only", "Manual Only", "No Sleeve", "Loose Disc", "Loose Cartridge", "Nothing"] else 'N'
-        contents['Manual'] = 'Y' if selected_contents not in ["Case Only", "No Manual", "Loose Disc", "Loose Cartridge", "Nothing"] else 'N'
+        contents['Case'] = active_settings['symbols']['yes'] if selected_contents not in ["No Case", "Manual Only", "Sleeve Only", "Loose Disc", "Loose Cartridge", "Nothing"] else active_settings['symbols']['no']
+        contents['Sleeve'] = active_settings['symbols']['yes'] if selected_contents not in ["Case Only", "Manual Only", "No Sleeve", "Loose Disc", "Loose Cartridge", "Nothing"] else active_settings['symbols']['no']
+        contents['Manual'] = active_settings['symbols']['yes'] if selected_contents not in ["Case Only", "No Manual", "Loose Disc", "Loose Cartridge", "Nothing"] else active_settings['symbols']['no']
     else:
         contents['Contents'] = selected_contents
 
@@ -599,6 +599,9 @@ def populate_menu(frame, name, options):
     existing_var = active_selections.get(name)
     var = existing_var if existing_var else tk.IntVar(value=0)
     active_selections[name] = var
+    for modes, cbname in var.trace_info():
+        for mode in modes:
+            var.trace_remove(mode, cbname)
     buttons = []
 
     def on_change(*args):
@@ -1215,8 +1218,8 @@ def settings_save():
     if active_settings is None:
         return
     try:
-        with open(os.path.join(BASE_DIR, "settings.json"), "w") as f:
-            json.dump(active_settings, f, indent=4)
+        with open(os.path.join(BASE_DIR, "settings.json"), "w", encoding="utf-8") as f:
+            json.dump(active_settings, f, indent=4, ensure_ascii=True)
         print("Settings saved successfully.")
     except Exception as e:
         print(f"Error saving settings: {e}")
@@ -1475,6 +1478,7 @@ def main():
         return
 
     root = tk.Tk(className="GBScan")
+    root.tk.call('encoding', 'system', 'utf-8')
     root.title("GBScan")
     root.columnconfigure(0, weight=1)
     root.rowconfigure(0, weight=1)
@@ -1671,6 +1675,43 @@ def main():
     frames_padded.append(togglesframe)
     setuprow += 1
     populate_toggles(togglesframe)
+
+    symbolsframe = ttk.LabelFrame(setup_tab, text="Symbols", padding="8")
+    symbolsframe.grid(row=setuprow, column=0, sticky=tk.W+tk.E)
+    frames_padded.append(symbolsframe)
+    setuprow += 1
+
+    symyeslabel = ttk.Label(symbolsframe, text="Yes:")
+    symyeslabel.grid(row=0, column=0, sticky=tk.W)
+    symyesentrystringvar = tk.StringVar(value=active_settings.get("symbols", {}).get("yes", "Y"))
+    symyesentry = ttk.Entry(symbolsframe, textvariable=symyesentrystringvar)
+    symyesentry.grid(row=0, column=1, sticky=tk.W+tk.E)
+
+    symnolabel = ttk.Label(symbolsframe, text="No:")
+    symnolabel.grid(row=0, column=2, sticky=tk.W)
+    symnoentrystringvar = tk.StringVar(value=active_settings.get("symbols", {}).get("no", "N"))
+    symnoentry = ttk.Entry(symbolsframe, textvariable=symnoentrystringvar)
+    symnoentry.grid(row=0, column=3, sticky=tk.W+tk.E)
+
+    def sym_paste(entry, var):
+        text = pyperclip.paste()
+        print(f"Debug paste: {repr(text)}")
+        var.set(text.strip())
+        return "break"
+    
+    def sym_save(name, var, event=None):
+        if active_settings is None:
+            print("Debug: Cannot save symbol, settings not loaded.")
+            return
+        if "symbols" not in active_settings:
+            active_settings["symbols"] = {}
+        active_settings.setdefault("symbols", {})[name] = var.get().strip()
+        print(f"Debug: Set symbol {name}: {active_settings['symbols'][name]}")
+
+    symyesentry.bind('<<Paste>>', lambda e: sym_paste(symyesentry, symyesentrystringvar))
+    symnoentry.bind('<<Paste>>', lambda e: sym_paste(symnoentry, symnoentrystringvar))
+    symyesentrystringvar.trace_add('write', lambda *a: sym_save("yes", symyesentrystringvar))
+    symnoentrystringvar.trace_add('write',  lambda *a: sym_save("no",  symnoentrystringvar))
 
     main_notebook.add(mainframe, text="Main")
     main_notebook.add(setup_tab, text="Setup")

@@ -131,6 +131,10 @@
             "Condition"
         ]
     },
+    "symbols": {
+        "yes": "Y",
+        "no": "N"
+    },
     "platform_defaults": {
         "PS1": {
             "formats": 0,
