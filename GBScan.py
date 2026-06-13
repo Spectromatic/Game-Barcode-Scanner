@@ -135,8 +135,8 @@ def game_accept():
     
     selected_title = active_title.get()
     selected_platform = get_platform_key()
-    selected_contents = active_settings['contents'][active_selections.get("contents", tk.IntVar()).get()]
-    selected_format = active_settings['formats'][active_selections.get("formats", tk.IntVar()).get()]
+    selected_contents = get_contents()
+    selected_format = get_format()
     
     # Move the "The" to the end if the title starts with "The " and it's enabled in settings
     if selected_title.startswith("The ") and is_toggled('use_the_suffix'):
@@ -158,10 +158,10 @@ def game_accept():
         "Release Date": [active_game_data.get('release_date')] if active_game_data.get('release_date') else "",
         "Platform": get_platform_name() if is_toggled('use_full_platform_name') else get_platform_key(),
         **contents,
-        "Condition": active_settings['conditions'][active_selections.get("conditions", tk.IntVar()).get()],
-        "Case Condition": active_settings['case_conditions'][active_selections.get("case_conditions", tk.IntVar()).get()],
+        "Condition": get_condition(),
+        "Case Condition": get_case_condition(),
         "Format": selected_format,
-        "Edition": active_settings['editions'][active_selections.get("editions", tk.IntVar()).get()],
+        "Edition": get_edition(),
         "Developer": [active_game_data.get('developer')] if active_game_data.get('developer') else "",
         "Payed": [active_game_data.get('payed')] if active_game_data.get('payed') else "",
         "Value": [active_physical_data.get('price')] if active_physical_data.get('price') else "",
@@ -198,7 +198,7 @@ def game_accept():
     df = pd.DataFrame(ordered_data)
 
     write_to_file(df, get_platform_key())
-    game_log(selected_title, selected_platform, active_game_data.get('release_date', ''), selected_format)
+    game_log(selected_title, selected_platform, active_game_data.get('release_date', ''), get_format(), get_condition(), get_case_condition(), get_contents(), get_edition())
     game_clear()
     game_search_clear()
     game_search_focus()
@@ -230,15 +230,20 @@ def game_decline():
     game_clear()
     game_search_focus()
 
-def game_log(title, platform, release_date, format):
+def game_log(title, platform, release_date, format, condition, case_condition, contents, edition):
     global logframe, logtree
     
     if logframe is None or logtree is None:
         return
     
     tag = 'even' if len(logtree.get_children()) % 2 == 0 else 'odd'
-    logtree.insert("", "end", values=(title, release_date, platform, format), tags=(tag,))
-    print(f"Debug: Logged game - Title: {title}, Platform: {platform}, Release Date: {release_date}, Format: {format}")
+    logtree.insert("", "end", values=(title, release_date, platform, format, condition, case_condition, contents, edition), tags=(tag,))
+    print(f"Debug: Logged game - Title: {title}, Platform: {platform}, Release Date: {release_date}, Format: {format}, Condition: {condition}, Case Condition: {case_condition}, Contents: {contents}, Edition: {edition}")
+
+def get_case_condition():
+    if active_settings is None:
+        return None
+    return active_settings["case_conditions"][active_selections.get("case_conditions", tk.IntVar()).get()]
 
 def get_color(name, default):
     if active_settings is None:
@@ -254,6 +259,16 @@ def get_contents():
     if active_settings is None:
         return None
     return active_settings["contents"][active_selections.get("contents", tk.IntVar()).get()]
+
+def get_edition():
+    if active_settings is None:
+        return None
+    return active_settings["editions"][active_selections.get("editions", tk.IntVar()).get()]
+
+def get_format():
+    if active_settings is None:
+        return None
+    return active_settings["formats"][active_selections.get("formats", tk.IntVar()).get()]
 
 def get_platform_key():
     if active_settings is None:
@@ -855,11 +870,11 @@ def scrape_game_data(game_url):
     active_taxonomy['gameplay'] = scrape_for_dt(soup, 'Gameplay') or ''
     active_taxonomy['setting'] = scrape_for_dt(soup, 'Setting') or ''
 
-    active_physical_data['format'] = active_settings["formats"][active_selections.get("formats", tk.IntVar()).get()]
+    active_physical_data['format'] = get_format()
     active_physical_data['condition'] = get_condition()
-    active_physical_data['case_condition'] = active_settings["case_conditions"][active_selections.get("case_conditions", tk.IntVar()).get()]
+    active_physical_data['case_condition'] = get_case_condition()
     active_physical_data['content'] = get_contents()
-    active_physical_data['edition'] = active_settings["editions"][active_selections.get("editions", tk.IntVar()).get()]
+    active_physical_data['edition'] = get_edition()
 
     print(f"Debug: Game Data: {active_game_data}")
     print(f"Debug: Taxonomy Data: {active_taxonomy}")
@@ -1560,15 +1575,23 @@ def main():
     mainrow += 1
 
     # Add a scrollable tree view to the log frame with 5 rows visible at a time and 3 columns for Title, Platform, and Release Date
-    logtree = ttk.Treeview(logframe, columns=("Title", "Release Date", "Platform", "Format"), show="headings", height=5)
+    logtree = ttk.Treeview(logframe, columns=("Title", "Release Date", "Platform", "Format", "Condition", "Case Condition", "Contents", "Edition"), show="headings", height=5)
     logtree.heading("Title", text="Title")
     logtree.heading("Platform", text="Platform")
     logtree.heading("Release Date", text="Release Date")
     logtree.heading("Format", text="Format")
-    logtree.column("Title", width=200)
-    logtree.column("Release Date", width=50)
-    logtree.column("Platform", width=50)
-    logtree.column("Format", width=50)
+    logtree.heading("Condition", text="Condition")
+    logtree.heading("Case Condition", text="Case Condition")
+    logtree.heading("Contents", text="Contents")
+    logtree.heading("Edition", text="Edition")
+    logtree.column("Title", width=300)
+    logtree.column("Release Date", width=15)
+    logtree.column("Platform", width=15)
+    logtree.column("Format", width=15)
+    logtree.column("Condition", width=40)
+    logtree.column("Case Condition", width=40)
+    logtree.column("Contents", width=40)
+    logtree.column("Edition", width=40)
     logtree.grid(row=0, column=0, sticky="nsew")
     logtree.tag_configure('even', background=even_bg)
     logtree.tag_configure('odd', background=odd_bg)
