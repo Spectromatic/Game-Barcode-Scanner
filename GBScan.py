@@ -500,70 +500,7 @@ def open_platform_mapping_window(platform_list=None):
         label = ttk.Label(frame, text=col)
         label.grid(row=1, column=j, sticky="nsew", padx=2, pady=2)
     
-    def pm_add():
-        if active_settings is None:
-            return
-        
-        new_key = f"Platform{len(active_settings['platforms'])+1}"
-        active_settings["platforms"][new_key] = new_key
-        pm_save(entries=entries)
-        platform_mapping_window.destroy()
-        open_platform_mapping_window()
-
-    def pm_close():
-        pm_save(entries=entries)
-        platform_mapping_window.destroy()
-
-    def pm_remove(key):
-        if active_settings is None:
-            return
-        active_settings["platforms"].pop(key, None)
-        pm_save(entries=entries)
-        platform_mapping_window.destroy()
-        open_platform_mapping_window()
-
-    def pm_save(event=None, entries=None):
-        if active_settings is None or entries is None:
-            return
-        new_platforms = {}
-        for k, (key_entry, name_entry) in entries.items():
-            new_platforms[key_entry.get().strip() or k] = name_entry.get().strip() or key_entry.get().strip() or k
-        active_settings["platforms"] = new_platforms
-        # Update the platform list in the main settings
-        if platform_list is not None:
-            platform_list.set("; ".join(get_platforms()))
-        settings_save()
-
-    entries = {}
-    platforms = get_platforms()
-    for i, key in enumerate(platforms, start=2):
-        name = active_settings["platforms"].get(key, key)
-        key_entry = ttk.Entry(frame)
-        key_entry.grid(row=i, column=0, sticky="nsew", padx=2, pady=2)
-        key_entry.insert(0, key)
-
-        name_entry = ttk.Entry(frame)
-        name_entry.grid(row=i, column=1, sticky="nsew", padx=2, pady=2)
-        name_entry.insert(0, name)
-
-        entries[key] = (key_entry, name_entry)
-
-        pmremovebutton = ttk.Button(frame, text="Delete", command=lambda k=key: pm_remove(k))
-        pmremovebutton.grid(row=i, column=2, sticky="nsew", padx=2, pady=2)
-
-        name_entry.bind("<FocusOut>", lambda event, e=entries: pm_save(event, e))
-        name_entry.bind("<Return>", lambda event, e=entries: pm_save(event, e))
-        key_entry.bind("<FocusOut>", lambda event, e=entries: pm_save(event, e))
-        key_entry.bind("<Return>", lambda event, e=entries: pm_save(event, e))
-
-    pmactionsframe = ttk.Frame(frame)
-    pmactionsframe.grid(row=i+1, column=0, columnspan=3, sticky="nsew", padx=2, pady=2)
-    pmactionsframe.columnconfigure(0, weight=1)
-    pmactionsframe.columnconfigure(1, weight=1)
-    pmaddbutton = ttk.Button(pmactionsframe, text="Add Platform", command=lambda: pm_add())
-    pmaddbutton.grid(row=0, column=0, sticky="nsew", padx=2, pady=2)
-    pmclosebutton = ttk.Button(pmactionsframe, text="Close", command=pm_close)
-    pmclosebutton.grid(row=0, column=1, sticky="nsew", padx=2, pady=2)
+    populate_platform_mapping_list(frame, platform_list=platform_list, window=platform_mapping_window)
 
 def open_platform_defaults_window():
     if active_settings is None:
@@ -670,6 +607,76 @@ def populate_platform_defaults_list(frame, settings_keys):
         
         delete_button = ttk.Button(row_frame, text="Delete", command=lambda p=platform: default_remove(p))
         delete_button.grid(row=0, column=len(settings_keys) + 1, padx=4, pady=4, sticky="w")
+
+def populate_platform_mapping_list(frame, platform_list=None, window=None):
+    if active_settings is None:
+        return
+    
+    for child in frame.winfo_children():
+        child.destroy()
+
+    def pm_add():
+        if active_settings is None:
+            return
+        
+        new_key = f"Platform{len(active_settings['platforms'])+1}"
+        active_settings["platforms"][new_key] = new_key
+        populate_platform_mapping_list(frame, platform_list=platform_list, window=window)
+
+    def pm_close():
+        pm_save(entries=entries)
+        if window is not None:
+            window.destroy()
+
+    def pm_remove(key):
+        if active_settings is None:
+            return
+        active_settings["platforms"].pop(key, None)
+        entries.pop(key, None)
+        pm_save(entries=entries)
+        populate_platform_mapping_list(frame, platform_list=platform_list, window=window)
+
+    def pm_save(event=None, entries=None):
+        if active_settings is None or entries is None:
+            return
+        new_platforms = {}
+        for k, (key_entry, name_entry) in entries.items():
+            new_platforms[key_entry.get().strip() or k] = name_entry.get().strip() or key_entry.get().strip() or k
+        active_settings["platforms"] = new_platforms
+        if platform_list is not None:
+            platform_list.set("; ".join(get_platforms()))
+        settings_save()
+
+    entries = {}
+    platforms = get_platforms()
+    for i, key in enumerate(platforms, start=2):
+        name = active_settings["platforms"].get(key, key)
+        key_entry = ttk.Entry(frame)
+        key_entry.grid(row=i, column=0, sticky="nsew", padx=2, pady=2)
+        key_entry.insert(0, key)
+
+        name_entry = ttk.Entry(frame)
+        name_entry.grid(row=i, column=1, sticky="nsew", padx=2, pady=2)
+        name_entry.insert(0, name)
+
+        entries[key] = (key_entry, name_entry)
+
+        pmremovebutton = ttk.Button(frame, text="Delete", command=lambda k=key: pm_remove(k))
+        pmremovebutton.grid(row=i, column=2, sticky="nsew", padx=2, pady=2)
+
+        name_entry.bind("<FocusOut>", lambda event, e=entries: pm_save(event, e))
+        name_entry.bind("<Return>", lambda event, e=entries: pm_save(event, e))
+        key_entry.bind("<FocusOut>", lambda event, e=entries: pm_save(event, e))
+        key_entry.bind("<Return>", lambda event, e=entries: pm_save(event, e))
+
+    pmactionsframe = ttk.Frame(frame)
+    pmactionsframe.grid(row=len(platforms) + 2, column=0, columnspan=3, sticky="nsew", padx=2, pady=2)
+    pmactionsframe.columnconfigure(0, weight=1)
+    pmactionsframe.columnconfigure(1, weight=1)
+    pmaddbutton = ttk.Button(pmactionsframe, text="Add Platform", command=lambda: pm_add())
+    pmaddbutton.grid(row=0, column=0, sticky="nsew", padx=2, pady=2)
+    pmclosebutton = ttk.Button(pmactionsframe, text="Close", command=pm_close)
+    pmclosebutton.grid(row=0, column=1, sticky="nsew", padx=2, pady=2)
 
 def populate_rule_list(frame):
     if active_settings is None:
