@@ -40,7 +40,9 @@
     "case_conditions": [
         "OK",
         "Cracked",
-        "Opens Badly"
+        "Cracked & Opens Badly",
+        "Opens Badly",
+        "N/A"
     ],
     "contents": [
         "CIB",
@@ -61,7 +63,8 @@
         "Bundle",
         "Special",
         "Collector",
-        "GOTY"
+        "GOTY",
+        "Promo"
     ],
     "column_order": [
         "Title",
@@ -129,6 +132,9 @@
         ],
         "Switch": [
             "Condition"
+        ],
+        "PC": [
+            "Case Condition"
         ]
     },
     "symbols": {
@@ -139,7 +145,7 @@
         "PS1": {
             "formats": 0,
             "conditions": 4,
-            "case_conditions": 0,
+            "case_conditions": 2,
             "contents": 0,
             "editions": 0
         },
@@ -184,6 +190,20 @@
             "case_conditions": 0,
             "contents": 0,
             "editions": 0
+        },
+        "GBA": {
+            "conditions": 3,
+            "case_conditions": 0,
+            "contents": 0,
+            "editions": 0,
+            "formats": 1
+        },
+        "PS2": {
+            "conditions": 4,
+            "case_conditions": 0,
+            "contents": 1,
+            "editions": 0,
+            "formats": 1
         }
     },
     "scraped_data": {

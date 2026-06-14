@@ -565,6 +565,112 @@ def open_platform_mapping_window(platform_list=None):
     pmclosebutton = ttk.Button(pmactionsframe, text="Close", command=pm_close)
     pmclosebutton.grid(row=0, column=1, sticky="nsew", padx=2, pady=2)
 
+def open_platform_defaults_window():
+    if active_settings is None:
+        return
+    
+    platform_defaults_window = tk.Toplevel(class_="GBScan")
+    platform_defaults_window.title("GBScan - Edit Platform Defaults")
+    platform_defaults_window.columnconfigure(0, weight=1)
+    platform_defaults_window.rowconfigure(0, weight=1)
+
+    frame = ttk.Frame(platform_defaults_window)
+    frame.grid(row=0, column=0, sticky="nsew", padx=4, pady=4)
+    frame.columnconfigure(0, weight=1)
+    frame.columnconfigure(1, weight=3)
+
+    add_frame = ttk.LabelFrame(frame, text="Add Platform Default")
+    add_frame.grid(row=0, column=0, columnspan=2, sticky="nsew", padx=4, pady=4)
+
+    settings_keys = ["conditions", "case_conditions", "contents", "editions", "formats"]
+
+    platforms_with_default = get_platforms() + ["Default"]
+    ttk.Label(add_frame, text="Platform").grid(row=0, column=0, padx=4, pady=2, sticky="w")
+    for i, key in enumerate(settings_keys, start=1):
+        ttk.Label(add_frame, text=key.replace("_", " ").title()).grid(row=0, column=i, padx=4, pady=2, sticky="w")
+
+    add_platform_var = tk.StringVar(value=platforms_with_default[0] if platforms_with_default else "Default")
+    add_platform_menu = ttk.OptionMenu(add_frame, add_platform_var, add_platform_var.get(), *platforms_with_default)
+    add_platform_menu.grid(row=1, column=0, padx=4, pady=4, sticky="w")
+
+    # Create a dropdown for each settings key and store the StringVar in a dictionary for later retrieval
+    add_setting_vars = {}
+    for i, key in enumerate(settings_keys, start=1):
+        options = active_settings.get(key, [])
+        var = tk.StringVar(value=options[0] if options else "")
+        menu = ttk.OptionMenu(add_frame, var, var.get(), *options)
+        menu.config(width=len(max(options, key=len)) + 2 if options else 10)
+        menu.grid(row=1, column=i, padx=2, pady=4, sticky="w")
+        add_setting_vars[key] = var
+
+    def default_add():
+        if active_settings is None:
+            return
+        platform = add_platform_var.get()
+        if not platform:
+            return
+        new_defaults = {}
+        for key, var in add_setting_vars.items():
+            options = active_settings.get(key, [])
+            idx = options.index(var.get()) if var.get() in options else 0
+            new_defaults[key] = idx
+        active_settings.setdefault("platform_defaults", {})[platform] = new_defaults
+        settings_save()
+        populate_platform_defaults_list(list_frame, settings_keys)
+
+    add_button = ttk.Button(add_frame, text="Add Default", command=default_add)
+    add_button.grid(row=1, column=len(settings_keys) + 1, padx=4, pady=4, sticky="w")
+
+    # Create list for the existing defaults
+    list_frame = ttk.LabelFrame(frame, text="Current Defaults")
+    list_frame.grid(row=1, column=0, sticky="nsew", padx=4, pady=4)
+
+    populate_platform_defaults_list(list_frame, settings_keys)
+
+    close_button = ttk.Button(frame, text="Close", command=platform_defaults_window.destroy)
+    close_button.grid(row=2, column=0, sticky="nsew", padx=4, pady=4)
+
+def populate_platform_defaults_list(frame, settings_keys):
+    if active_settings is None:
+        return
+    
+    for child in frame.winfo_children():
+        child.destroy()
+
+    def default_edit(platform, key, var):
+        if active_settings is None:
+            return
+        options = active_settings.get(key, [])
+        idx = options.index(var.get()) if var.get() in options else 0
+        active_settings.setdefault("platform_defaults", {}).setdefault(platform, {})[key] = idx
+        settings_save()
+
+    def default_remove(platform):
+        if active_settings is None:
+            return
+        active_settings.setdefault("platform_defaults", {}).pop(platform, None)
+        settings_save()
+        populate_platform_defaults_list(frame, settings_keys)
+
+    for i, (platform, settings) in enumerate(active_settings.setdefault("platform_defaults", {}).items()):
+        platform_name = platform
+        row_frame = ttk.Frame(frame)
+        row_frame.grid(sticky="nsew", padx=4, pady=4)
+        ttk.Label(row_frame, text=platform_name, width=15).grid(row=0, column=0, padx=4, pady=4, sticky="w")
+        for j, key in enumerate(settings_keys, start=1):
+            options = active_settings.get(key, [])
+            idx = settings.get(key, 0)
+            var = tk.StringVar(value=options[idx] if options else "")
+            menu = ttk.OptionMenu(row_frame, var, var.get(), *options)
+            menu.config(width=len(max(options, key=len)) + 2 if options else 10)
+            menu.grid(row=0, column=j, padx=2, pady=4, sticky="w")
+
+            # Add trace to update the settings when the dropdown value changes
+            var.trace_add("write", lambda *args, p=platform, k=key, v=var: default_edit(p, k, v))
+        
+        delete_button = ttk.Button(row_frame, text="Delete", command=lambda p=platform: default_remove(p))
+        delete_button.grid(row=0, column=len(settings_keys) + 1, padx=4, pady=4, sticky="w")
+
 def populate_rule_list(frame):
     if active_settings is None:
         return
@@ -1683,6 +1789,7 @@ def main():
     exclusionframe.grid(row=setuprow, column=0, sticky=tk.W+tk.E)
     exclusionframe.columnconfigure(0, weight=1)
     exclusionframe.columnconfigure(1, weight=1)
+    exclusionframe.columnconfigure(2, weight=1)
     frames_padded.append(exclusionframe)
     setuprow += 1
 
@@ -1691,6 +1798,9 @@ def main():
 
     eorderbutton = ttk.Button(exclusionframe, text="Edit Column Order", command=lambda: open_column_order_window())
     eorderbutton.grid(row=0, column=1, sticky="nsew")
+
+    edefaultsbutton = ttk.Button(exclusionframe, text="Edit Platform Defaults", command=lambda: open_platform_defaults_window())
+    edefaultsbutton.grid(row=0, column=2, sticky="nsew")
 
     # Display all the toggles from the settings file
     togglesframe = ttk.LabelFrame(setup_tab, text="Toggles", padding="8")

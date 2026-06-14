@@ -29,7 +29,7 @@ Run the following command in your terminal:
 - [x] Add ability to re-order the column order from the setup tab
 - [x] Add ability to exclude columns per platform on setup tab
 - [x] Add a setup tab to tweak settings file
-- [ ] Add ability to set defaults per platform
+- [x] Add ability to set defaults per platform
 - [ ] Add ability to set rules per context
 - [x] Add all context to listview
 - [ ] Make recall respect current columns
