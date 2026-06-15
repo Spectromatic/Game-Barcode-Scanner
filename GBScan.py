@@ -64,8 +64,8 @@ def clear_infoframe():
                 empty_label.grid(row=i, column=j*2, sticky="nsew")
                 empty_label = ttk.Label(infoframe, text="", style=f"InfoData{'Even' if (i) % 2 == 0 else 'Odd'}.TLabel")
                 empty_label.grid(row=i, column=j*2+1, sticky="nsew")
-                infoframe.columnconfigure(j*2, weight=1, uniform="info")
-                infoframe.columnconfigure(j*2+1, weight=1, uniform="info")
+                infoframe.columnconfigure(j*2, weight=0 if j*2 % 2 == 0 else 1, minsize=100 if j*2 % 2 == 0 else 10)
+                infoframe.columnconfigure(j*2+1, weight=0 if (j*2+1) % 2 == 0 else 1, minsize=100 if (j*2+1) % 2 == 0 else 10)
         return
 
 def cycle_selection(name, direction=1):
@@ -1511,7 +1511,7 @@ def update_info_frame():
 
     cols, rows = infoframe.grid_size()
     for col in range(cols):
-        infoframe.columnconfigure(col, weight=1, uniform="info")
+        infoframe.columnconfigure(col, weight=0 if col % 2 == 0 else 1, minsize=100 if col % 2 == 0 else 10)
     for row in range(rows):
         infoframe.rowconfigure(row, weight=1, minsize=20)
 
