@@ -33,3 +33,5 @@ Run the following command in your terminal:
 - [ ] Add ability to set rules per context
 - [x] Add all context to listview
 - [ ] Make recall respect current columns
+- [ ] Add payed context
+- [ ] Add ability to define custom contexts
