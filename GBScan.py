@@ -1218,6 +1218,7 @@ def scrape_for_dt_mul(soup, text):
     return a_elements
 
 def scrape_upc(game_url):
+    print(f"Debug: Scraping UPC from {game_url}")
     response = requests.get(game_url)
     soup = bs.BeautifulSoup(response.text, 'html.parser')
 
@@ -1229,14 +1230,17 @@ def scrape_upc(game_url):
     
     # Find the row that contains the platform name
     upc_row = upc_soup.find('tr', itemprop='identifier')
-    if not upc_row:
+    if upc_row is None:
         print(f"Debug: No UPC found {upc_row}.")
         return None
-    
+
     upc = upc_row.find('td', class_='details').text.strip()
+    if upc is None or upc.lower() == "none":
+        print(f"Debug: UPC not found in the expected cell: {upc}")
+        return None
+
     print(f"Debug: Found UPC: {upc}")
-    
-    return upc if upc else None     
+    return upc   
 
 def search_game(query):
     global active_specs
@@ -1286,8 +1290,8 @@ def search_game(query):
         active_physical_data['upc'] = query
         print(f"Debug: Using UPC from search query: {active_physical_data['upc']}")
     elif item_link:
-        active_physical_data['upc'] = scrape_upc(item_link)
-        print(f"Debug: Scraped UPC: {active_physical_data['upc']}")
+        upc = scrape_upc(item_link)
+        active_physical_data['upc'] = upc or ''
     else:
         active_physical_data.setdefault('upc', '')
         print("Debug: No UPC found from search query or item page.")
