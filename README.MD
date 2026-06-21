@@ -35,3 +35,5 @@ Run the following command in your terminal:
 - [ ] Make recall respect current columns
 - [ ] Add payed context
 - [ ] Add ability to define custom contexts
+- [ ] Add ability to add unknown game
+- [x] Add ability to quickly add missing fields
