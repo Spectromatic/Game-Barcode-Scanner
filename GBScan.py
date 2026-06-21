@@ -7,9 +7,11 @@ import requests
 import bs4 as bs
 import pandas as pd
 import tkinter as tk
+import threading
 from PIL import Image, ImageDraw, ImageFont, ImageTk
 from tkinter import ttk
 from tkinter import messagebox
+from tooltip import Tooltip
 
 import sys
 BASE_DIR = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else os.path.dirname(__file__)
@@ -22,6 +24,7 @@ active_selections = {}
 active_specs = {}
 active_taxonomy = {}
 active_title = None
+app_root = None
 frames = []
 frames_padded = []
 infoframe = None
@@ -29,9 +32,11 @@ choicesframe = None
 contextlist = []
 searchentry = None
 acceptbutton = None
+declinebutton = None
 logframe = None
 logtree = None
 _exclusion_image_refs = []
+missing_fields = {}
 
 def button_focus_accept():
     global acceptbutton
@@ -270,6 +275,9 @@ def get_format():
         return None
     return active_settings["formats"][active_selections.get("formats", tk.IntVar()).get()]
 
+def get_game(query):
+    threading.Thread(target=search_game, args=(query,), daemon=True).start()
+
 def get_platform_key():
     if active_settings is None:
         return None
@@ -285,6 +293,25 @@ def get_platform_name():
         return None
     return active_settings["platforms"][get_platform_key()]
 
+def get_response(url, timeout=100, **kwargs):
+    try:
+        return requests.get(url, timeout=timeout, **kwargs)
+    except requests.RequestException as e:
+        handle_error(f"Error fetching URL: {url}\n{e}")
+        return None
+
+def handle_accept_key(root, event):
+        if isinstance(root.focus_get(), (ttk.Entry, tk.Entry)):
+            return
+        if acceptbutton is not None and acceptbutton.instate(['!disabled']):
+            acceptbutton.invoke()
+
+def handle_decline_key(root, event):
+    if isinstance(root.focus_get(), (ttk.Entry, tk.Entry)):
+        return
+    if declinebutton is not None and declinebutton.instate(['!disabled']):
+        declinebutton.invoke()
+
 def handle_ellipsis(text, max_length=30):
     return text if len(text) <= max_length else text[:max_length-3] + "..."
 
@@ -292,22 +319,32 @@ def handle_error(message):
     # Display the error message in a message box
     messagebox.showerror("Error", message)
 
-def handle_missing_upc(parent, row, column, initial_text = ""):
+def handle_missing_field(widget, key):
+    info = widget.grid_info()
+    parent = widget.master
+    row = info['row']
+    column = info['column']
+    text = widget.cget("text")
+
+    if text.startswith("Add "):
+        widget.destroy()
+
     entry = ttk.Entry(parent)
     entry.grid(row=row, column=column, sticky="nsew")
-    entry.insert(0, initial_text)
-    entry.focus_set()
+    # Ensure focus after the event loop finishes
+    parent.after_idle(entry.focus_set)
+    # store the live entry widget so identity checks work
+    missing_fields[key] = entry
+
     def on_submit(event=None):
-        upc = entry.get().strip()
-        if is_upc(upc):
-            active_physical_data['upc'] = upc
-        else:
-            active_physical_data['upc'] = ''
+        update_info_choice(key, entry.get().strip())
         update_info_frame()
 
     entry.bind("<Return>", on_submit)
     entry.bind("<FocusOut>", on_submit)
-    entry.bind("<Escape>", lambda e: (active_physical_data.update({'upc': ''}), update_info_frame()))
+    entry.bind("<Escape>", lambda e: update_info_frame())
+
+    return entry
 
 def handle_missing_upc_shortcut(event=None):
     if infoframe is None:
@@ -331,6 +368,62 @@ def handle_single_option(options):
         return str(options[0])
     # If it's not a single option, just return the list back
     return ", ".join(str(x) for x in options)
+
+def handle_tab_key(root, event):
+    print("Debug: Tab key pressed - cycling through missing fields")
+    # Cycle through the missing field entries when Tab is pressed
+    if not missing_fields:
+        return
+
+    focused_widget = root.focus_get()
+    keys = list(missing_fields.keys())
+
+    # If focus is in a plain entry that's NOT one of our missing-field entries, let Tab behave normally
+    if isinstance(focused_widget, (ttk.Entry, tk.Entry)) and focused_widget is not None and focused_widget not in set(missing_fields.values()):
+        return
+    
+    # Get the index of the currently focused missing field, if we're in one
+    focused_index = None
+    for idx, k in enumerate(keys):
+        if missing_fields.get(k) is focused_widget:
+            focused_index = idx
+            break
+
+    # If we're not currently focused in any of the missing-field entries, focus the first one
+    if focused_index is None:
+        next_key = keys[0]
+        widget = missing_fields[next_key]
+
+        if isinstance(widget, ttk.Button):
+            handle_missing_field(widget, next_key)
+            print(f"Debug: No missing field focused, focusing first missing field: {next_key}")
+        else:
+            widget.focus_set()
+
+        return "break"
+    
+    # If we are focused inside one of our missing-field entries, commit it and move to the next missing field
+    current_key = keys[focused_index]
+    if isinstance(focused_widget, (ttk.Entry, tk.Entry)):
+        update_info_choice(current_key, focused_widget.get().strip())
+        # rebuild the UI to rebuild the missing_fields dict with the updated values and widgets
+        update_info_frame()
+
+        # next key based on the previous list
+        next_idx = (focused_index + 1) % len(keys)
+        next_key = keys[next_idx]
+        if next_key in missing_fields:
+            widget = missing_fields[next_key]
+            if isinstance(widget, ttk.Button):
+                entry = handle_missing_field(widget, next_key)
+                if entry:
+                    root.after_idle(entry.focus_set)
+            else:
+                missing_fields[next_key].focus_set()
+
+        return "break"
+    
+    return
 
 def handle_toggle_change(toggle):
     if active_settings is None:
@@ -787,9 +880,11 @@ def populate_selections(frame, i, offset, current_selection, value, key, label_c
             for b, bv in btns:
                 b.state(['pressed'] if bv == v else ['!pressed'])
 
-        btn = ttk.Button(frame, text=handle_ellipsis(t), command=on_click)
+        btn_text = handle_ellipsis(t)
+        btn = ttk.Button(frame, text=btn_text, command=on_click)
         btn.grid(row=row, column=btn_col, sticky="nsew")
         btn.config(padding=(0, 0))
+        Tooltip(btn, text=t)
         sel_buttons.append((btn, t))
 
     for btn, val in sel_buttons:
@@ -959,7 +1054,10 @@ def scrape_game_data(game_url):
     print(f"Debug: Initial Game Data: {active_game_data}")
     print(f"Debug: Initial Taxonomy Data: {active_taxonomy}")
 
-    response = requests.get(game_url)
+    response = get_response(game_url)
+
+    if response is None:
+        return None
 
     if response.status_code != 200:
         handle_error(f"Failed to retrieve game data from the website. Status code: {response.status_code}")
@@ -1047,7 +1145,9 @@ def scrape_dx(specs, dict={}):
 
 def scrape_prices(game_url):
     game_url = f"{game_url}/stores"
-    response = requests.get(game_url)
+    response = get_response(game_url)
+    if response is None:
+        return None
     soup = bs.BeautifulSoup(response.text, 'html.parser')
 
     price_soup = soup.find('table', class_='table table-borders table-hover')
@@ -1096,7 +1196,9 @@ def scrape_price_pricecharting(barcode):
         return None, None
     
     search_url = f"https://www.pricecharting.com/search-products?type=prices&q={barcode}"
-    response = requests.get(search_url)
+    response = get_response(search_url)
+    if response is None:
+        return None, None
     soup = bs.BeautifulSoup(response.text, 'html.parser')
 
     price_soup = soup.find('table', class_='js-addable hoverable-rows sortable')
@@ -1165,7 +1267,9 @@ def scrape_price_pricecharting(barcode):
 
 def scrape_specs(game_url):
     game_url = f"{game_url}/specs"
-    response = requests.get(game_url)
+    response = get_response(game_url)
+    if response is None:
+        return None
     soup = bs.BeautifulSoup(response.text, 'html.parser')
     
     specs = soup.find('table', class_='table table-nowrap text-sm')
@@ -1219,7 +1323,9 @@ def scrape_for_dt_mul(soup, text):
 
 def scrape_upc(game_url):
     print(f"Debug: Scraping UPC from {game_url}")
-    response = requests.get(game_url)
+    response = get_response(game_url)
+    if response is None:
+        return None
     soup = bs.BeautifulSoup(response.text, 'html.parser')
 
     upc_soup = soup.find('table', id='attribute')
@@ -1244,12 +1350,14 @@ def scrape_upc(game_url):
 
 def search_game(query):
     global active_specs
-    # Search for the name in the settings and return the corresponding value
+    
     if active_settings is None:
         return None
 
     search_url = f"https://www.mobygames.com/search/?q={query}"
-    response = requests.get(search_url)
+    response = get_response(search_url)
+    if response is None:
+        return None
     soup = bs.BeautifulSoup(response.text, 'html.parser')
     
     # Find the first search result link
@@ -1295,9 +1403,15 @@ def search_game(query):
     else:
         active_physical_data.setdefault('upc', '')
         print("Debug: No UPC found from search query or item page.")
-    update_button_states("normal")
-    update_info_frame()
-    button_focus_accept()
+    
+    def finish():
+        update_button_states("normal")
+        update_info_frame()
+        button_focus_accept()
+
+    if app_root is None:
+        return
+    app_root.after(100, finish)
 
 def selections_update(name, value):
     # Update the defaults based on the platform selection
@@ -1448,7 +1562,7 @@ def update_info_choice(key, value):
         active_physical_data[key] = selected_value
 
 def update_info_frame():
-    global infoframe, active_game_data, active_taxonomy, active_physical_data, active_title, active_perspective
+    global infoframe, active_game_data, active_taxonomy, active_physical_data, active_title, active_perspective, missing_fields
     if infoframe is None:
         return
     
@@ -1457,6 +1571,7 @@ def update_info_frame():
         return
     
     clear_infoframe()
+    missing_fields.clear()
     
     active_game_items = list(active_game_data.items())
     active_taxonomy_items = list(active_taxonomy.items())
@@ -1475,43 +1590,56 @@ def update_info_frame():
     # Update the info frame with the current game data
     for i in range(max_rows - extra_titles):
         key, value = active_game_items[i] if i < len(active_game_items) else ("", "")
+        row = i + active_game_data_offset
         suffix = ":" if key else ""
-        data_label = ttk.Label(infoframe, text=handle_ellipsis(handle_single_option(f"{key.capitalize()}{suffix}")), style=f"InfoData{'Even' if (i + active_game_data_offset) % 2 == 0 else 'Odd'}.TLabel")
-        data_label.grid(row=i + active_game_data_offset, column=0, sticky="nsew")
+        data_label = ttk.Label(infoframe, text=handle_ellipsis(handle_single_option(f"{key.capitalize()}{suffix}")), style=f"InfoData{'Even' if row % 2 == 0 else 'Odd'}.TLabel")
+        data_label.grid(row=row, column=0, sticky="nsew")
 
         if key and key.lower() == 'title' and len(value) > 1:
             active_title, active_game_data_offset = populate_selections(infoframe, i, active_game_data_offset, current_title, value, 'title', 0, 1)
+        elif key and not value and not isinstance(value, list):
+            add_btn = ttk.Button(infoframe, text=f"Add {key.capitalize()}", padding=(0, 0))
+            add_btn.grid(row=row, column=1, sticky="nsew")
+            add_btn.config(command=lambda r=row, k=key: handle_missing_field(add_btn, k))
+            missing_fields[key] = add_btn
         else:
-            value_label = ttk.Label(infoframe, text=handle_ellipsis(handle_single_option(value)), style=f"InfoData{'Even' if (i + active_game_data_offset) % 2 == 0 else 'Odd'}.TLabel")
-            value_label.grid(row=i + active_game_data_offset, column=1, sticky="nsew")
+            value_label = ttk.Label(infoframe, text=handle_ellipsis(handle_single_option(value)), style=f"InfoData{'Even' if row % 2 == 0 else 'Odd'}.TLabel")
+            value_label.grid(row=row, column=1, sticky="nsew")
 
     # Update the info frame with the current taxonomy data
     for j in range(max_rows - extra_perspectives):
         key, value = active_taxonomy_items[j] if j < len(active_taxonomy_items) else ("", "")
+        row = j + active_taxonomy_offset
         suffix = ":" if key else ""
-        data_label = ttk.Label(infoframe, text=handle_ellipsis(f"{key.capitalize()}{suffix}"), style=f"InfoData{'Even' if (j + active_taxonomy_offset) % 2 == 0 else 'Odd'}.TLabel")
-        data_label.grid(row=j + active_taxonomy_offset, column=2, sticky="nsew")
+        data_label = ttk.Label(infoframe, text=handle_ellipsis(f"{key.capitalize()}{suffix}"), style=f"InfoData{'Even' if row % 2 == 0 else 'Odd'}.TLabel")
+        data_label.grid(row=row, column=2, sticky="nsew")
 
         if key and key.lower() == 'perspective' and len(value) > 1:
             active_perspective, active_taxonomy_offset = populate_selections(infoframe, j, active_taxonomy_offset, current_perspective, value, 'perspective', 2, 3)
+        elif key and not value and not isinstance(value, list):
+            add_btn = ttk.Button(infoframe, text=f"Add {key.capitalize()}", padding=(0, 0))
+            add_btn.grid(row=row, column=3, sticky="nsew")    
+            add_btn.config(command=lambda r=row, k=key: handle_missing_field(add_btn, k))
+            missing_fields[key] = add_btn
         else:
-            value_label = ttk.Label(infoframe, text=handle_ellipsis(handle_single_option(value)), style=f"InfoData{'Even' if (j + active_taxonomy_offset) % 2 == 0 else 'Odd'}.TLabel")
-            value_label.grid(row=j + active_taxonomy_offset, column=3, sticky="nsew")
+            value_label = ttk.Label(infoframe, text=handle_ellipsis(handle_single_option(value)), style=f"InfoData{'Even' if row % 2 == 0 else 'Odd'}.TLabel")
+            value_label.grid(row=row, column=3, sticky="nsew")
 
     # Update the info frame with the current physical data
     for k in range(max_rows):
         key, value = active_physical_items[k] if k < len(active_physical_items) else ("", "")
+        row = k + active_physical_data_offset
         suffix = ":" if key else ""
-        data_label = ttk.Label(infoframe, text=handle_ellipsis(f"{key.capitalize()}{suffix}"), style=f"InfoData{'Even' if (k + active_physical_data_offset) % 2 == 0 else 'Odd'}.TLabel")
-        data_label.grid(row=k + active_physical_data_offset, column=4, sticky="nsew")
-        if key and key.lower() == 'upc' and not value:
-            row = k + active_physical_data_offset
-            add_btn = ttk.Button(infoframe, text="Add UPC", command=lambda r=row: handle_missing_upc(infoframe, r, 5))
-            add_btn.config(padding=(0, 0))
+        data_label = ttk.Label(infoframe, text=handle_ellipsis(f"{key.capitalize()}{suffix}"), style=f"InfoData{'Even' if row % 2 == 0 else 'Odd'}.TLabel")
+        data_label.grid(row=row, column=4, sticky="nsew")
+        if key and not value:
+            add_btn = ttk.Button(infoframe, text=f"Add {key.capitalize() if key != 'upc' else 'UPC'}", padding=(0, 0))
             add_btn.grid(row=row, column=5, sticky="nsew")
+            add_btn.config(command=lambda r=row, k=key: handle_missing_field(add_btn, k))
+            missing_fields[key] = add_btn
         else:
-            value_label = ttk.Label(infoframe, text=handle_ellipsis(f"{value}"), style=f"InfoData{'Even' if (k + active_physical_data_offset) % 2 == 0 else 'Odd'}.TLabel")
-            value_label.grid(row=k + active_physical_data_offset, column=5, sticky="nsew")
+            value_label = ttk.Label(infoframe, text=handle_ellipsis(f"{value}"), style=f"InfoData{'Even' if row % 2 == 0 else 'Odd'}.TLabel")
+            value_label.grid(row=row, column=5, sticky="nsew")
 
     cols, rows = infoframe.grid_size()
     for col in range(cols):
@@ -1604,12 +1732,13 @@ def write_to_file(data, platform):
         pyperclip.copy(new_reindexed.to_csv(sep='\t', index=False, header=False))
 
 def main():
-    global infoframe, searchentry, logframe, logtree, acceptbutton, contextlist
+    global infoframe, searchentry, logframe, logtree, acceptbutton, declinebutton, contextlist, app_root
     if active_settings is None:
         handle_error("No settings available.")
         return
 
     root = tk.Tk(className="GBScan")
+    app_root = root
     root.tk.call('encoding', 'system', 'utf-8')
     root.title("GBScan")
     root.columnconfigure(0, weight=1)
@@ -1725,7 +1854,7 @@ def main():
     searchlabel.grid(row=0, column=0, sticky=tk.W)
     searchentry = ttk.Entry(searchframe, width=40)
     searchentry.grid(row=0, column=1, sticky=tk.W+tk.E)
-    searchbutton = ttk.Button(searchframe, text="Search", command=lambda: search_game(searchentry.get() if searchentry is not None else ""))
+    searchbutton = ttk.Button(searchframe, text="Search", command=lambda: get_game(searchentry.get() if searchentry is not None else ""))
     searchbutton.grid(row=0, column=2, sticky=tk.W)
 
     acceptbutton = ttk.Button(searchframe, text="Accept (Y)", state="disabled", command=lambda: game_accept())
@@ -1864,22 +1993,16 @@ def main():
     searchentry.bind('<Return>', lambda event: searchbutton.invoke())
     # Make the search entry focused when the application starts
     searchentry.focus()
-    def handle_accept_key(event):
-        if root.focus_get() != searchentry and acceptbutton is not None and acceptbutton.instate(['!disabled']):
-            acceptbutton.invoke()
-
-    def handle_decline_key(event):
-        if root.focus_get() != searchentry and declinebutton is not None and declinebutton.instate(['!disabled']):
-            declinebutton.invoke()
 
     logtree.bind("<Double-1>", recall_log_item)
-    root.bind_all('<y>', handle_accept_key)
-    root.bind_all('<Y>', handle_accept_key)
-    root.bind_all('<n>', handle_decline_key)
-    root.bind_all('<N>', handle_decline_key)
-    root.bind_all('<Delete>', handle_decline_key)
+    root.bind_all('<y>', lambda event: handle_accept_key(root, event))
+    root.bind_all('<Y>', lambda event: handle_accept_key(root, event))
+    root.bind_all('<n>', lambda event: handle_decline_key(root, event))
+    root.bind_all('<N>', lambda event: handle_decline_key(root, event))
+    root.bind_all('<Delete>', lambda event: handle_decline_key(root, event))
     root.bind_all('<Control-q>', lambda event: root.quit())
     root.bind_all('<Insert>', handle_missing_upc_shortcut)
+    root.bind('<Tab>', lambda event: handle_tab_key(root, event))
     if searchentry is not None:
         root.bind_all('<Control-a>', button_select_all)
 
