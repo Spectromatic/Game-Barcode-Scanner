@@ -104,6 +104,9 @@
         "Setting",
         "Genre",
         "Gameplay",
+        "Coop",
+        "Multiplayer",
+        "Singleplayer",
         "Played",
         "Completed",
         "Rating",
@@ -128,13 +131,22 @@
             "Win10",
             "Copy Protection",
             "Spawnable",
-            "Force Feedback"
+            "Force Feedback",
+            "Coop",
+            "Multiplayer",
+            "Singleplayer"
         ],
         "Switch": [
-            "Condition"
+            "Condition",
+            "Singleplayer",
+            "Multiplayer",
+            "Coop"
         ],
         "PC": [
-            "Case Condition"
+            "Case Condition",
+            "Coop",
+            "Multiplayer",
+            "Singleplayer"
         ]
     },
     "symbols": {
@@ -209,7 +221,10 @@
     "scraped_data": {
         "title": [],
         "release_date": 1900,
-        "developer": ""
+        "developer": "",
+        "coop": false,
+        "multiplayer": false,
+        "singleplayer": false
     },
     "scraped_taxonomy": {
         "perspective": [],

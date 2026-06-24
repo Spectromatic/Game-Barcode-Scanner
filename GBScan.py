@@ -191,6 +191,9 @@ def game_accept():
         "Perspective": [active_perspective.get()] if isinstance(active_perspective, tk.StringVar) else [str(active_perspective)] if str(active_perspective) else "",
         "Setting": [active_taxonomy.get('setting')] if active_taxonomy.get('setting') else "",
         "Genre": [active_taxonomy.get('genre')] if active_taxonomy.get('genre') else "",
+        "Co-op": [active_game_data.get('coop')] if active_game_data.get('coop') is not None else "",
+        "Multiplayer": [active_game_data.get('multiplayer')] if active_game_data.get('multiplayer') is not None else "",
+        "Singleplayer": [active_game_data.get('singleplayer')] if active_game_data.get('singleplayer') is not None else "",
         "Gameplay": [active_taxonomy.get('gameplay')] if active_taxonomy.get('gameplay') else "",
         "Moby Score": [active_taxonomy.get('moby_score')] if active_taxonomy.get('moby_score') else "",
         "Added": [pd.Timestamp.now().strftime("%Y-%m-%d")],
@@ -984,6 +987,33 @@ def scrape_data_perspective(soup):
 
     return active_taxonomy.get('perspective')
 
+def scrape_data_playtype(soup):
+    global active_game_data
+    if soup is None:
+        return
+    
+    if active_settings is None:
+        return
+    
+    offline_players = scrape_for_dt(soup, 'Number of Offline Players') or 0
+    online_players = scrape_for_dt(soup, 'Number of Online Players') or 0
+
+    # Strip "player" from the end of the strings if present
+    if offline_players:
+        offline_players = re.sub(r'\s*player[s]?\s*$', '', offline_players, flags=re.IGNORECASE)
+        offline_players_max = int(offline_players.split('-')[-1].strip())  # Take the last number if it's a range
+        offline_players_min = int(offline_players.split('-')[0].strip())  # Take the first number if it's a range
+        
+    if online_players:
+        online_players = re.sub(r'\s*player[s]?\s*$', '', online_players, flags=re.IGNORECASE)
+        online_players = int(online_players.split('-')[-1].strip())  # Take the last number if it's a range
+
+    active_game_data['coop'] = active_settings['symbols']['yes'] if offline_players_max > 1 else active_settings['symbols']['no']
+    active_game_data['multiplayer'] = active_settings['symbols']['yes'] if offline_players_max > 1 or online_players > 1 else active_settings['symbols']['no']
+    active_game_data['singleplayer'] = active_settings['symbols']['yes'] if offline_players_min == 1 else active_settings['symbols']['no']
+
+    return
+
 def scrape_data_release_date(soup):
     if active_settings is None:
         return
@@ -1073,6 +1103,7 @@ def scrape_game_data(game_url):
     scrape_data_moby_score(soup)
     scrape_data_perspective(soup)
     scrape_data_release_date(soup)
+    scrape_data_playtype(soup)
     scrape_data_title(soup)
 
     active_game_data['developer'] = scrape_for_dt(soup, 'Developers') or ''
