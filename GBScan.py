@@ -18,7 +18,7 @@ BASE_DIR = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else
 
 active_game_data = {}
 active_perspective = None
-active_physical_data = {}
+active_contexts = {}
 active_settings = None
 active_selections = {}
 active_specs = {}
@@ -207,7 +207,7 @@ def game_accept():
         "Edition": get_edition(),
         "Developer": [active_game_data.get('developer')] if active_game_data.get('developer') else "",
         "Payed": [active_game_data.get('payed')] if active_game_data.get('payed') else "",
-        "Value": [active_physical_data.get('price')] if active_physical_data.get('price') else "",
+        "Value": [active_contexts.get('price')] if active_contexts.get('price') else "",
         "DOS": [active_specs.get('DOS', '')] if active_specs else "",
         "3.1": [active_specs.get('3.1', '')] if active_specs else "",
         "95": [active_specs.get('95', '')] if active_specs else "",
@@ -235,7 +235,7 @@ def game_accept():
         "Gameplay": [active_taxonomy.get('gameplay')] if active_taxonomy.get('gameplay') else "",
         "Moby Score": [active_taxonomy.get('moby_score')] if active_taxonomy.get('moby_score') else "",
         "Added": [pd.Timestamp.now().strftime("%Y-%m-%d")],
-        "UPC": [active_physical_data.get('upc')] if active_physical_data.get('upc') else ""
+        "UPC": [active_contexts.get('upc')] if active_contexts.get('upc') else ""
     }
     
     # Re-order the columns based on the order in the settings
@@ -251,10 +251,10 @@ def game_accept():
 
 def game_clear():
     # Clear the active game data and reset the active title and perspective
-    global active_game_data, active_taxonomy, active_physical_data, active_title, active_perspective
+    global active_game_data, active_taxonomy, active_contexts, active_title, active_perspective
     active_game_data = {}
     active_taxonomy = {}
-    active_physical_data = {}
+    active_contexts = {}
     active_title = None
     active_perspective = None
 
@@ -320,6 +320,11 @@ def get_custom_contexts():
     if active_settings is None:
         return {}
     return active_settings.get("custom_context", {}).keys()
+
+def get_custom_context_data(context):
+    if active_settings is None:
+        return []
+    return active_settings["custom_context"][context][active_selections.get(context, tk.IntVar()).get()] if context in active_settings.get("custom_context", {}) else []
 
 def get_edition():
     if active_settings is None:
@@ -1203,7 +1208,7 @@ def scrape_data_title(soup):
     return titles
 
 def scrape_game_data(game_url):
-    global active_game_data, active_taxonomy, active_physical_data
+    global active_game_data, active_taxonomy, active_contexts
 
     if active_settings is None:
         return None
@@ -1241,15 +1246,17 @@ def scrape_game_data(game_url):
     active_taxonomy['gameplay'] = scrape_for_dt(soup, 'Gameplay') or ''
     active_taxonomy['setting'] = scrape_for_dt(soup, 'Setting') or ''
 
-    active_physical_data['format'] = get_format()
-    active_physical_data['condition'] = get_condition()
-    active_physical_data['case_condition'] = get_case_condition()
-    active_physical_data['content'] = get_contents()
-    active_physical_data['edition'] = get_edition()
+    active_contexts['format'] = get_format()
+    active_contexts['condition'] = get_condition()
+    active_contexts['case_condition'] = get_case_condition()
+    active_contexts['content'] = get_contents()
+    active_contexts['edition'] = get_edition()
+    for context in get_custom_contexts():
+        active_contexts[context] = get_custom_context_data(context)
 
     print(f"Debug: Game Data: {active_game_data}")
     print(f"Debug: Taxonomy Data: {active_taxonomy}")
-    print(f"Debug: Physical Data: {active_physical_data}")
+    print(f"Debug: Physical Data: {active_contexts}")
     return active_game_data
 
 def scrape_min_os(soup, dict={}):
@@ -1553,15 +1560,15 @@ def search_game(query):
         active_specs = scrape_specs(url)
 
     #active_physical_data['price'] = scrape_prices(url)
-    active_physical_data['price'], item_link = scrape_price_pricecharting(query)
+    active_contexts['price'], item_link = scrape_price_pricecharting(query)
     if is_upc(query):
-        active_physical_data['upc'] = query
-        print(f"Debug: Using UPC from search query: {active_physical_data['upc']}")
+        active_contexts['upc'] = query
+        print(f"Debug: Using UPC from search query: {active_contexts['upc']}")
     elif item_link:
         upc = scrape_upc(item_link)
-        active_physical_data['upc'] = upc or ''
+        active_contexts['upc'] = upc or ''
     else:
-        active_physical_data.setdefault('upc', '')
+        active_contexts.setdefault('upc', '')
         print("Debug: No UPC found from search query or item page.")
     
     def finish():
@@ -1581,28 +1588,28 @@ def selections_update(name, value):
     if active_settings is None:
         return
     
-    old_condition = active_physical_data.get("condition", "").lower()
-    old_content = active_physical_data.get("content", "").lower()
+    old_condition = active_contexts.get("condition", "").lower()
+    old_content = active_contexts.get("content", "").lower()
 
-    for setting in active_physical_data.keys():
+    for setting in active_contexts.keys():
         setting_plural = setting + "s"
         options = get_context_options(setting_plural)
         if not options:
             continue
-        active_physical_data[setting] = options[active_selections.get(setting_plural, tk.IntVar()).get()]
+        active_contexts[setting] = options[active_selections.get(setting_plural, tk.IntVar()).get()]
 
     if name in ("conditions", "contents"):
-        new_condition = (active_physical_data.get("condition") or "").lower()
-        new_content = (active_physical_data.get("content") or "").lower()
+        new_condition = (active_contexts.get("condition") or "").lower()
+        new_content = (active_contexts.get("content") or "").lower()
         should_refetch = (name == "conditions" and (("sealed" in new_condition and "sealed" not in old_condition) or ("sealed" in old_condition and "sealed" not in new_condition))) or (name == "contents" and (("loose" in new_content and "loose" not in old_content) or ("loose" in old_content and "loose" not in new_content)))
         price = None
         if should_refetch:
             print(f"Debug: Refetching prices due to change in condition/content. Old Condition: {old_condition}, New Condition: {new_condition}, Old Content: {old_content}, New Content: {new_content}")
-            price, _ = scrape_price_pricecharting(active_physical_data.get("upc") or active_game_data.get("title", [None])[0])
+            price, _ = scrape_price_pricecharting(active_contexts.get("upc") or active_game_data.get("title", [None])[0])
 
         if price is not None:
-            active_physical_data["price"] = price
-            print(f"Debug: Re-fetched price for UPC {active_physical_data.get('upc') or active_game_data.get('title', [None])[0]}: {price}")
+            active_contexts["price"] = price
+            print(f"Debug: Re-fetched price for UPC {active_contexts.get('upc') or active_game_data.get('title', [None])[0]}: {price}")
 
     update_info_frame()
 
@@ -1728,11 +1735,11 @@ def update_info_choice(key, value):
         active_game_data[key] = selected_value
     elif key in active_taxonomy:
         active_taxonomy[key] = selected_value
-    elif key in active_physical_data:
-        active_physical_data[key] = selected_value
+    elif key in active_contexts:
+        active_contexts[key] = selected_value
 
 def update_info_frame():
-    global infoframe, active_game_data, active_taxonomy, active_physical_data, active_title, active_perspective, missing_fields
+    global infoframe, active_game_data, active_taxonomy, active_contexts, active_title, active_perspective, missing_fields
     if infoframe is None:
         return
     
@@ -1745,7 +1752,7 @@ def update_info_frame():
     
     active_game_items = list(active_game_data.items())
     active_taxonomy_items = list(active_taxonomy.items())
-    active_physical_items = list(active_physical_data.items())
+    active_physical_items = list(active_contexts.items())
 
     extra_titles = max(len(active_game_data.get('title', [])) - 1, 0)
     extra_perspectives = max(len(active_taxonomy.get('perspective', [])) - 1, 0)
