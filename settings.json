@@ -16,56 +16,142 @@
         "XBOX": "Xbox",
         "GBA": "Game Boy Advance"
     },
-    "formats": [
-        "CD",
-        "DVD",
-        "Small Box",
-        "Big Box",
-        "Sleeve",
-        "Floppy",
-        "Cartridge",
-        "Digital"
-    ],
-    "conditions": [
-        "Sealed",
-        "Mint",
-        "Near Mint",
-        "Minor Scratches",
-        "Moderate Scratches",
-        "Heavy Scratches",
-        "Extreme Scratches",
-        "Missing Disc",
-        "N/A"
-    ],
-    "case_conditions": [
-        "OK",
-        "Cracked",
-        "Cracked & Opens Badly",
-        "Opens Badly",
-        "N/A"
-    ],
-    "contents": [
-        "CIB",
-        "No Manual",
-        "No Sleeve",
-        "No Case",
-        "Sleeve Only",
-        "Manual Only",
-        "Case Only",
-        "Loose Disc",
-        "Nothing"
-    ],
-    "editions": [
-        "Standard",
-        "Re-Release",
-        "Platinum",
-        "Compilation",
-        "Bundle",
-        "Special",
-        "Collector",
-        "GOTY",
-        "Promo"
-    ],
+    "context": {
+        "formats": [
+            "CD",
+            "DVD",
+            "Small Box",
+            "Big Box",
+            "Sleeve",
+            "Floppy",
+            "Cartridge",
+            "Digital"
+        ],
+        "conditions": [
+            "Sealed",
+            "Mint",
+            "Near Mint",
+            "Minor Scratches",
+            "Moderate Scratches",
+            "Heavy Scratches",
+            "Extreme Scratches",
+            "Missing Disc",
+            "N/A"
+        ],
+        "case_conditions": [
+            "OK",
+            "Cracked",
+            "Cracked & Opens Badly",
+            "Opens Badly",
+            "N/A"
+        ],
+        "contents": [
+            "CIB",
+            "No Manual",
+            "No Sleeve",
+            "No Case",
+            "Sleeve Only",
+            "Manual Only",
+            "Case Only",
+            "Loose Disc",
+            "Nothing"
+        ],
+        "editions": [
+            "Standard",
+            "Re-Release",
+            "Platinum",
+            "Compilation",
+            "Bundle",
+            "Special",
+            "Collector",
+            "GOTY",
+            "Promo"
+        ]
+    },
+    "custom_context": {},
+    "taxonomy_mapping": {
+        "dimension": "dimension",
+        "time": [
+            "pacing",
+            "time"
+        ],
+        "perspective": [
+            "perspective",
+            "visual"
+        ],
+        "movement": "movement",
+        "setting": "setting",
+        "genre": "genre",
+        "gameplay": "gameplay",
+        "type": "type"
+    },
+    "taxonomy": {
+        "dimension": [
+            "2D",
+            "2.5D",
+            "3D"
+        ],
+        "time": [
+            "Real-Time",
+            "Turn-Based",
+            "RTwP",
+            "RT/TB"
+        ],
+        "perspective": [
+            "1st Person",
+            "3rd Person",
+            "1st/3rd Person",
+            "Fixed Camera",
+            "Isometric",
+            "Overhead",
+            "Top-Down",
+            "Side-Scrolling"
+        ],
+        "movement": [
+            "Free-Roaming",
+            "Grid-Based",
+            "On-Rails",
+            "Stationary"
+        ],
+        "setting": [
+            "Contemporary",
+            "Fantasy",
+            "Sci-Fi",
+            "Historical",
+            "Post-Apoc",
+            "Horror",
+            "War / Military",
+            "Western"
+        ],
+        "genre": [
+            "Action",
+            "Adventure",
+            "RPG",
+            "Simulation",
+            "Strategy",
+            "Sports",
+            "Puzzle"
+        ],
+        "gameplay": [
+            "Fighting",
+            "Flying",
+            "Hack & Slash",
+            "Looter Shooter",
+            "Platforming",
+            "Point & Click Adventure",
+            "Racing",
+            "Rogue-like",
+            "Rogue-lite",
+            "Role-Playing",
+            "Run & Gun",
+            "Shooting",
+            "Strategy"
+        ],
+        "type": [
+            "Game",
+            "Simulator"
+        ]
+    },
     "column_order": [
         "Title",
         "Release Date",
@@ -261,6 +347,7 @@
             "case_conditions": "#00AA88",
             "contents": "#00BB88",
             "editions": "#0099BB",
+            "test": "#00AAAA",
             "row_even_bg": "#f8f8f8",
             "row_odd_bg": "#e8e8e8"
         }

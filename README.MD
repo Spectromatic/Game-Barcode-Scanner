@@ -34,6 +34,6 @@ Run the following command in your terminal:
 - [x] Add all context to listview
 - [ ] Make recall respect current columns
 - [ ] Add payed context
-- [ ] Add ability to define custom contexts
+- [x] Add ability to define custom contexts
 - [ ] Add ability to add unknown game
 - [x] Add ability to quickly add missing fields

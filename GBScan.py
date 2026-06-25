@@ -10,7 +10,7 @@ import tkinter as tk
 import threading
 from PIL import Image, ImageDraw, ImageFont, ImageTk
 from tkinter import ttk
-from tkinter import messagebox
+from tkinter import messagebox, simpledialog
 from tooltip import Tooltip
 
 import sys
@@ -72,6 +72,44 @@ def clear_infoframe():
                 infoframe.columnconfigure(j*2, weight=0 if j*2 % 2 == 0 else 1, minsize=100 if j*2 % 2 == 0 else 10)
                 infoframe.columnconfigure(j*2+1, weight=0 if (j*2+1) % 2 == 0 else 1, minsize=100 if (j*2+1) % 2 == 0 else 10)
         return
+
+def context_add(frame, entries, row_idx = 0, main_contextframe=None):
+    if active_settings is None:
+        return
+    
+    # Prompt the user for a new context name
+    new_context = simpledialog.askstring("Add Context", "Enter the name of the new context:")
+    if not new_context:
+        return
+    
+    # Add the new context to the settings
+    active_settings.setdefault("custom_context", {})[new_context.lower()] = []
+
+    # Add the new context to the column order
+    if new_context.lower() not in [col.lower() for col in active_settings.get("column_order", [])]:
+        active_settings.setdefault("column_order", []).append(new_context)
+    
+    # Update the UI to reflect the new context
+    settings_save()
+    populate_context_setup(frame, entries, row_idx, main_contextframe)
+    if main_contextframe is not None:
+        populate_context_frames(main_contextframe, 0, contextlist, frames)
+
+def context_delete(frame, entries, context_choice, main_contextframe=None):
+    if active_settings is None:
+        return
+    
+    # Remove the context from the settings
+    active_settings.setdefault("custom_context", {}).pop(context_choice.lower(), None)
+
+    # Remove the context from the column order
+    active_settings["column_order"] = [col for col in active_settings.get("column_order", []) if col.lower() != context_choice.lower()]
+    
+    # Update the UI to reflect the removed context
+    settings_save()
+    populate_context_setup(frame, entries, 0, main_contextframe)
+    if main_contextframe is not None:
+        populate_context_frames(main_contextframe, 0, contextlist, frames)
 
 def cycle_selection(name, direction=1):
     if active_settings is None:
@@ -251,7 +289,7 @@ def game_log(title, platform, release_date, format, condition, case_condition, c
 def get_case_condition():
     if active_settings is None:
         return None
-    return active_settings["case_conditions"][active_selections.get("case_conditions", tk.IntVar()).get()]
+    return active_settings["context"]["case_conditions"][active_selections.get("case_conditions", tk.IntVar()).get()]
 
 def get_color(name, default):
     if active_settings is None:
@@ -261,22 +299,37 @@ def get_color(name, default):
 def get_condition():
     if active_settings is None:
         return None
-    return active_settings["conditions"][active_selections.get("conditions", tk.IntVar()).get()]
+    return active_settings["context"]["conditions"][active_selections.get("conditions", tk.IntVar()).get()]
 
 def get_contents():
     if active_settings is None:
         return None
-    return active_settings["contents"][active_selections.get("contents", tk.IntVar()).get()]
+    return active_settings["context"]["contents"][active_selections.get("contents", tk.IntVar()).get()]
+
+def get_contexts():
+    if active_settings is None:
+        return {}
+    return active_settings.get("context", {}).keys()
+
+def get_context_options(key) -> list:
+    if active_settings is None:
+        return []
+    return active_settings.get("context", {}).get(key, []) if key in active_settings.get("context", {}) else active_settings.get("custom_context", {}).get(key, [])
+
+def get_custom_contexts():
+    if active_settings is None:
+        return {}
+    return active_settings.get("custom_context", {}).keys()
 
 def get_edition():
     if active_settings is None:
         return None
-    return active_settings["editions"][active_selections.get("editions", tk.IntVar()).get()]
+    return active_settings["context"]["editions"][active_selections.get("editions", tk.IntVar()).get()]
 
 def get_format():
     if active_settings is None:
         return None
-    return active_settings["formats"][active_selections.get("formats", tk.IntVar()).get()]
+    return active_settings["context"]["formats"][active_selections.get("formats", tk.IntVar()).get()]
 
 def get_game(query):
     threading.Thread(target=search_game, args=(query,), daemon=True).start()
@@ -615,7 +668,7 @@ def open_platform_defaults_window():
     add_frame = ttk.LabelFrame(frame, text="Add Platform Default")
     add_frame.grid(row=0, column=0, columnspan=2, sticky="nsew", padx=4, pady=4)
 
-    settings_keys = ["conditions", "case_conditions", "contents", "editions", "formats"]
+    settings_keys = list(dict.fromkeys(list(get_contexts()) + list(get_custom_contexts())))
 
     platforms_with_default = get_platforms() + ["Default"]
     ttk.Label(add_frame, text="Platform").grid(row=0, column=0, padx=4, pady=2, sticky="w")
@@ -629,7 +682,7 @@ def open_platform_defaults_window():
     # Create a dropdown for each settings key and store the StringVar in a dictionary for later retrieval
     add_setting_vars = {}
     for i, key in enumerate(settings_keys, start=1):
-        options = active_settings.get(key, [])
+        options = get_context_options(key)
         var = tk.StringVar(value=options[0] if options else "")
         menu = ttk.OptionMenu(add_frame, var, var.get(), *options)
         menu.config(width=len(max(options, key=len)) + 2 if options else 10)
@@ -644,7 +697,7 @@ def open_platform_defaults_window():
             return
         new_defaults = {}
         for key, var in add_setting_vars.items():
-            options = active_settings.get(key, [])
+            options = get_context_options(key)
             idx = options.index(var.get()) if var.get() in options else 0
             new_defaults[key] = idx
         active_settings.setdefault("platform_defaults", {})[platform] = new_defaults
@@ -663,6 +716,138 @@ def open_platform_defaults_window():
     close_button = ttk.Button(frame, text="Close", command=platform_defaults_window.destroy)
     close_button.grid(row=2, column=0, sticky="nsew", padx=4, pady=4)
 
+def populate_context_choices(frame, name):
+    # Populate a menu with the given options
+    label_text = name.capitalize().replace("_", " ")
+    if active_settings is None:
+        return
+    shortcut = active_settings.get("shortcuts", {}).get(name)
+    if shortcut:
+        label_text += f" ({shortcut})"
+
+    options = get_platforms() if name == "platforms" else get_context_options(name)
+
+    max_length = max(len(option) for option in options)
+    label_width = max(20, len(label_text))
+    label = ttk.Label(frame, text=label_text, width=label_width, anchor=tk.W)
+    label.pack(side=tk.LEFT, padx=4)
+    
+    existing_var = active_selections.get(name)
+    var = existing_var if existing_var else tk.IntVar(value=0)
+    active_selections[name] = var
+    for modes, cbname in var.trace_info():
+        for mode in modes:
+            var.trace_remove(mode, cbname)
+    buttons = []
+
+    def on_change(*args):
+        idx = var.get()
+        for i, btn in enumerate(buttons):
+            btn.state(['pressed'] if i == idx else ['!pressed'])
+        selections_update(name, idx)
+
+    var.trace_add("write", on_change)
+
+    # Button theming and button position
+    for index, option in enumerate(options):
+        
+        style_name = f"{name.capitalize()}Button.TButton"
+        style = ttk.Style()
+        style.configure(style_name, 
+                        background=get_color(name, "#e0e0e0"), 
+                        foreground="#000000",
+                        lightcolor=modify_color(get_color(name, "#d0d0d0"), 0.2),
+                        darkcolor=modify_color(get_color(name, "#c0c0c0"), -0.1),
+                        bordercolor=modify_color(get_color(name, "#a0a0a0"), -0.2))
+        style.map(style_name,
+                    background=[('pressed', modify_color(get_color(name, "#d0d0d0"), -0.1)),
+                                ('active', modify_color(get_color(name, "#d0d0d0"), 0.1))],
+                    foreground=[('pressed', modify_color(get_color(name, "#000000"), 0.25)), 
+                                ('active', modify_color(get_color(name, "#000000"), 0.5))],
+                    bordercolor=[('pressed', modify_color(get_color(name, "#a0a0a0"), -0.3)),
+                                 ('active', modify_color(get_color(name, "#a0a0a0"), -0.1))],
+                    relief=[('pressed', 'sunken'), ('!pressed', 'raised')])
+        btn = ttk.Button(frame, text=option, width=max_length, command=lambda i=index: var.set(i), style=style_name)
+        btn.config(padding=(0, 0))
+        btn.pack(side=tk.LEFT)
+        buttons.append(btn)
+
+    # Sync button visuals without calling selections_update
+    current = var.get()
+    for i, btn in enumerate(buttons):
+        btn.state(['pressed'] if i == current else ['!pressed'])
+
+def populate_context_frames(contextframe, contextrow, contextlist, frames) -> int:
+    # Populate the frames used for the normal and custom contexts choices from the settings file.
+    
+    # Clear existing widgets in the context frame
+    for child in contextframe.winfo_children():
+        child.destroy()
+
+    # Rebuild the lists to avoid stale frame references
+    contextlist.clear()
+    frames.clear()
+
+    # Create the platforms frame first
+    platform_frame = ttk.Frame(contextframe, padding="2")
+    platform_frame.grid(row=contextrow, column=0, sticky=tk.W+tk.E)
+    frames.append(platform_frame)
+    contextlist.append(("platforms", platform_frame))
+    contextrow += 1
+
+    for context in get_contexts():
+        frame = ttk.Frame(contextframe, padding="2")
+        frame.grid(row=contextrow, column=0, sticky=tk.W+tk.E)
+        frames.append(frame)
+        contextrow += 1
+        contextlist.append((context, frame))
+
+    for context in get_custom_contexts():
+        frame = ttk.Frame(contextframe, padding="2")
+        frame.grid(row=contextrow, column=0, sticky=tk.W+tk.E)
+        frames.append(frame)
+        contextrow += 1
+        contextlist.append((context, frame))
+
+    return contextrow
+
+def populate_context_setup(frame, entries, row_idx, main_contextframe) -> int:
+    if active_settings is None:
+        return row_idx
+    
+    # Clear existing widgets in the frame
+    for child in frame.winfo_children():
+        child.destroy()
+    
+    for context_choice in get_contexts():
+        label = ttk.Label(frame, text=f"{context_choice.capitalize()}:")
+        label.grid(row=row_idx, column=0, sticky=tk.W)
+        stringvar = tk.StringVar(value="; ".join(active_settings.get("context", {}).get(context_choice, [])))
+        entry = ttk.Entry(frame, textvariable=stringvar)
+        entry.grid(row=row_idx, column=1, sticky=tk.W+tk.E)
+        entries[context_choice] = stringvar
+        row_idx += 1
+
+    for context_choice in get_custom_contexts():
+        label = ttk.Label(frame, text=f"{context_choice.capitalize()}:")
+        label.grid(row=row_idx, column=0, sticky=tk.W)
+        stringvar = tk.StringVar(value="; ".join(active_settings.get("custom_context", {}).get(context_choice, [])))
+        entry = ttk.Entry(frame, textvariable=stringvar)
+        entry.grid(row=row_idx, column=1, sticky=tk.W+tk.E)
+        entries[context_choice] = stringvar
+        del_btn = ttk.Button(frame, text="Delete", command=lambda c=context_choice, mcf=main_contextframe: context_delete(frame, entries, c, mcf))
+        del_btn.grid(row=row_idx, column=2, sticky=tk.W)
+        row_idx += 1
+
+    saddcontextbutton = ttk.Button(frame, text="Add Context", command=lambda mcf=main_contextframe: context_add(frame, entries, row_idx, mcf))
+    saddcontextbutton.grid(row=row_idx, column=0, sticky="nsew", columnspan=3)
+    row_idx += 1
+
+    for child in frame.winfo_children():
+        child.grid_configure(padx=4, pady=4)
+
+    return row_idx
+
 def populate_platform_defaults_list(frame, settings_keys):
     if active_settings is None:
         return
@@ -673,7 +858,7 @@ def populate_platform_defaults_list(frame, settings_keys):
     def default_edit(platform, key, var):
         if active_settings is None:
             return
-        options = active_settings.get(key, [])
+        options = get_context_options(key)
         idx = options.index(var.get()) if var.get() in options else 0
         active_settings.setdefault("platform_defaults", {}).setdefault(platform, {})[key] = idx
         settings_save()
@@ -691,7 +876,7 @@ def populate_platform_defaults_list(frame, settings_keys):
         row_frame.grid(sticky="nsew", padx=4, pady=4)
         ttk.Label(row_frame, text=platform_name, width=15).grid(row=0, column=0, padx=4, pady=4, sticky="w")
         for j, key in enumerate(settings_keys, start=1):
-            options = active_settings.get(key, [])
+            options = get_context_options(key)
             idx = settings.get(key, 0)
             var = tk.StringVar(value=options[idx] if options else "")
             menu = ttk.OptionMenu(row_frame, var, var.get(), *options)
@@ -805,65 +990,6 @@ def populate_rule_list(frame):
 
         rule_delete_button = ttk.Button(frame, text="Delete", command=lambda r=rule: exclusion_rule_delete(frame, r))
         rule_delete_button.grid(row=i, column=j+1, sticky="nsew", padx=4, pady=4)
-
-def populate_menu(frame, name, options):
-    # Populate a menu with the given options
-    label_text = name.capitalize().replace("_", " ")
-    if active_settings is None:
-        return
-    shortcut = active_settings.get("shortcuts", {}).get(name)
-    if shortcut:
-        label_text += f" ({shortcut})"
-
-    max_length = max(len(option) for option in options)
-    label_width = max(20, len(label_text))
-    label = ttk.Label(frame, text=label_text, width=label_width, anchor=tk.W)
-    label.pack(side=tk.LEFT, padx=4)
-    
-    existing_var = active_selections.get(name)
-    var = existing_var if existing_var else tk.IntVar(value=0)
-    active_selections[name] = var
-    for modes, cbname in var.trace_info():
-        for mode in modes:
-            var.trace_remove(mode, cbname)
-    buttons = []
-
-    def on_change(*args):
-        idx = var.get()
-        for i, btn in enumerate(buttons):
-            btn.state(['pressed'] if i == idx else ['!pressed'])
-        selections_update(name, idx)
-
-    var.trace_add("write", on_change)
-
-    # Button theming and button position
-    for index, option in enumerate(options):
-        
-        style_name = f"{name.capitalize()}Button.TButton"
-        style = ttk.Style()
-        style.configure(style_name, 
-                        background=get_color(name, "#e0e0e0"), 
-                        foreground="#000000",
-                        lightcolor=modify_color(get_color(name, "#d0d0d0"), 0.2),
-                        darkcolor=modify_color(get_color(name, "#c0c0c0"), -0.1),
-                        bordercolor=modify_color(get_color(name, "#a0a0a0"), -0.2))
-        style.map(style_name,
-                    background=[('pressed', modify_color(get_color(name, "#d0d0d0"), -0.1)),
-                                ('active', modify_color(get_color(name, "#d0d0d0"), 0.1))],
-                    foreground=[('pressed', modify_color(get_color(name, "#000000"), 0.25)), 
-                                ('active', modify_color(get_color(name, "#000000"), 0.5))],
-                    bordercolor=[('pressed', modify_color(get_color(name, "#a0a0a0"), -0.3)),
-                                 ('active', modify_color(get_color(name, "#a0a0a0"), -0.1))],
-                    relief=[('pressed', 'sunken'), ('!pressed', 'raised')])
-        btn = ttk.Button(frame, text=option, width=max_length, command=lambda i=index: var.set(i), style=style_name)
-        btn.config(padding=(0, 0))
-        btn.pack(side=tk.LEFT)
-        buttons.append(btn)
-
-    # Sync button visuals without calling selections_update
-    current = var.get()
-    for i, btn in enumerate(buttons):
-        btn.state(['pressed'] if i == current else ['!pressed'])
 
 def populate_selections(frame, i, offset, current_selection, value, key, label_col, btn_col):
     active_selection = tk.StringVar(value=current_selection if current_selection is not None and current_selection in value else value[0])
@@ -997,6 +1123,9 @@ def scrape_data_playtype(soup):
     
     offline_players = scrape_for_dt(soup, 'Number of Offline Players') or 0
     online_players = scrape_for_dt(soup, 'Number of Online Players') or 0
+
+    if not offline_players:
+        offline_players = scrape_for_dt(soup, 'Number of Players Supported') or 0
 
     # Strip "player" from the end of the strings if present
     if offline_players:
@@ -1457,10 +1586,10 @@ def selections_update(name, value):
 
     for setting in active_physical_data.keys():
         setting_plural = setting + "s"
-        options = active_settings.get(setting_plural, [])
+        options = get_context_options(setting_plural)
         if not options:
             continue
-        active_physical_data[setting] = active_settings[setting_plural][active_selections.get(setting_plural, tk.IntVar()).get()]
+        active_physical_data[setting] = options[active_selections.get(setting_plural, tk.IntVar()).get()]
 
     if name in ("conditions", "contents"):
         new_condition = (active_physical_data.get("condition") or "").lower()
@@ -1543,20 +1672,30 @@ def update_choices(choiceentries = None, changes=False):
     if choiceentries is None:
         choiceentries = {}
 
-    for context, entry in choiceentries.items():
-        if context == "platforms":
-            # We save the changes for platforms elsewhere, so always assume there are changes
+    for context_choice, entry in choiceentries.items():
+        # We save the changes for platforms elsewhere, so always assume there are changes
+        if context_choice == "platforms":
             changes = True
             continue
 
-        if context != "platforms":
-            # Get the text in the entry and split it by semicolons
-            text = entry.get()
-            choices = [t.strip() for t in text.split(";") if t.strip()]
-            if active_settings.get(context) == choices:
+        # Get the text in the entry and split it by semicolons
+        text = entry.get()
+        choices = [t.strip() for t in text.split(";") if t.strip()]
+
+        # Save the normal context choices to the context dict in settings
+        if context_choice in active_settings.get("context", {}):
+            if active_settings.get("context", {}).get(context_choice) == choices:
                 continue
 
-            active_settings[context] = choices
+            active_settings.setdefault("context", {})[context_choice] = choices
+            changes = True
+
+        # Save the custom context choices to the custom_context dict in settings
+        if context_choice in active_settings.get("custom_context", {}):
+            if active_settings.get("custom_context", {}).get(context_choice) == choices:
+                continue
+
+            active_settings.setdefault("custom_context", {})[context_choice] = choices
             changes = True
 
     if not changes:
@@ -1570,7 +1709,7 @@ def update_choices(choiceentries = None, changes=False):
         # clear existing widgets so populate_menu doesn't duplicate
         for child in frame.winfo_children():
             child.destroy()
-        populate_menu(frame, key, active_settings.get(key, []))
+        populate_context_choices(frame, key)
 
 def update_info_choice(key, value):
     global active_title, active_perspective
@@ -1795,41 +1934,7 @@ def main():
     contextframe.grid(row=mainrow, column=0, sticky=tk.W+tk.E)
     mainrow += 1
 
-    platformframe = ttk.Frame(contextframe, padding="2")
-    platformframe.grid(row=contextrow, column=0, sticky=tk.W+tk.E)
-    frames.append(platformframe)
-    contextrow += 1
-    contextlist.append(("platforms", platformframe))
-
-    formatframe = ttk.Frame(contextframe, padding="2")
-    formatframe.grid(row=contextrow, column=0, sticky=tk.W+tk.E)
-    frames.append(formatframe)
-    contextrow += 1
-    contextlist.append(("formats", formatframe))
-
-    conditionframe = ttk.Frame(contextframe, padding="2")
-    conditionframe.grid(row=contextrow, column=0, sticky=tk.W+tk.E)
-    frames.append(conditionframe)
-    contextrow += 1
-    contextlist.append(("conditions", conditionframe))
-
-    caseconditionframe = ttk.Frame(contextframe, padding="2")
-    caseconditionframe.grid(row=contextrow, column=0, sticky=tk.W+tk.E)
-    frames.append(caseconditionframe)
-    contextrow += 1
-    contextlist.append(("case_conditions", caseconditionframe))
-
-    contentframe = ttk.Frame(contextframe, padding="2")
-    contentframe.grid(row=contextrow, column=0, sticky=tk.W+tk.E)
-    frames.append(contentframe)
-    contextrow += 1
-    contextlist.append(("contents", contentframe))
-
-    editionframe = ttk.Frame(contextframe, padding="2")
-    editionframe.grid(row=contextrow, column=0, sticky=tk.W+tk.E)
-    frames.append(editionframe)
-    contextrow += 1
-    contextlist.append(("editions", editionframe))
+    contextrow = populate_context_frames(contextframe, contextrow, contextlist, frames)
 
     databaseframe = ttk.Frame(contextframe, padding="2")
     databaseframe.grid(row=contextrow, column=0, sticky=tk.W+tk.E)
@@ -1842,8 +1947,7 @@ def main():
     mainrow += 1
 
     for key, frame in contextlist:
-        options = get_platforms() if key == "platforms" else active_settings.get(key, [])
-        populate_menu(frame, key, options)
+        populate_context_choices(frame, key)
     update_info_frame()
 
     logframe = ttk.LabelFrame(mainframe, text="Log", padding="2")
@@ -1899,62 +2003,29 @@ def main():
     setuprow = 0
     choiceentries = {}
 
-    choicesframe = ttk.LabelFrame(setup_tab, text="Choices", padding="8")
+    platformsframe = ttk.Frame(setup_tab, padding="8")
+    platformsframe.grid(row=setuprow, column=0, sticky=tk.W+tk.E)
+    platformsframe.columnconfigure(1, weight=1)
+    frames_padded.append(platformsframe)
+    setuprow += 1
+
+    splatformslabel = ttk.Label(platformsframe, text="Platforms:")
+    splatformslabel.grid(row=0, column=0, sticky=tk.W)
+    splatformsstringvar = tk.StringVar(value="; ".join(get_platforms()))
+    splatformsentry = ttk.Label(platformsframe, textvariable=splatformsstringvar, relief=tk.SUNKEN)
+    splatformsentry.grid(row=0, column=1, sticky=tk.W+tk.E)
+    splatformseditbutton = ttk.Button(platformsframe, text="Edit", command=lambda: open_platform_mapping_window(splatformsstringvar))
+    splatformseditbutton.grid(row=0, column=2, sticky=tk.W)
+    choiceentries["platforms"] = splatformsstringvar
+
+    choicesframe = ttk.LabelFrame(setup_tab, text="Contexts", padding="8")
     choicesframe.grid(row=setuprow, column=0, sticky=tk.W+tk.E)
     choicesframe.columnconfigure(1, weight=1)
     frames_padded.append(choicesframe)
     setuprow += 1
     choicesrow = 0
 
-    splatformslabel = ttk.Label(choicesframe, text="Platforms:")
-    splatformslabel.grid(row=choicesrow, column=0, sticky=tk.W)
-    splatformsstringvar = tk.StringVar(value="; ".join(get_platforms()))
-    splatformsentry = ttk.Label(choicesframe, textvariable=splatformsstringvar, relief=tk.SUNKEN)
-    splatformsentry.grid(row=choicesrow, column=1, sticky=tk.W+tk.E)
-    splatformseditbutton = ttk.Button(choicesframe, text="Edit", command=lambda: open_platform_mapping_window(splatformsstringvar))
-    splatformseditbutton.grid(row=choicesrow, column=2, sticky=tk.W)
-    choiceentries["platforms"] = splatformsstringvar
-    choicesrow += 1
-
-    sformatslabel = ttk.Label(choicesframe, text="Formats:")
-    sformatslabel.grid(row=choicesrow, column=0, sticky=tk.W)
-    sformatsentrystringvar = tk.StringVar(value="; ".join(active_settings.get("formats", [])))
-    sformatsentry = ttk.Entry(choicesframe, textvariable=sformatsentrystringvar)
-    sformatsentry.grid(row=choicesrow, column=1, sticky=tk.W+tk.E)
-    choiceentries["formats"] = sformatsentrystringvar
-    choicesrow += 1
-
-    sconditionslabel = ttk.Label(choicesframe, text="Conditions:")
-    sconditionslabel.grid(row=choicesrow, column=0, sticky=tk.W)
-    sconditionsstringvar = tk.StringVar(value="; ".join(active_settings.get("conditions", [])))
-    sconditionsentry = ttk.Entry(choicesframe, textvariable=sconditionsstringvar)
-    sconditionsentry.grid(row=choicesrow, column=1, sticky=tk.W+tk.E)
-    choiceentries["conditions"] = sconditionsstringvar
-    choicesrow += 1
-
-    scaseconditionslabel = ttk.Label(choicesframe, text="Case Conditions:")
-    scaseconditionslabel.grid(row=choicesrow, column=0, sticky=tk.W)
-    scaseconditionsstringvar = tk.StringVar(value="; ".join(active_settings.get("case_conditions", [])))
-    scaseconditionsentry = ttk.Entry(choicesframe, textvariable=scaseconditionsstringvar)
-    scaseconditionsentry.grid(row=choicesrow, column=1, sticky=tk.W+tk.E)
-    choiceentries["case_conditions"] = scaseconditionsstringvar
-    choicesrow += 1
-
-    scontentslabel = ttk.Label(choicesframe, text="Contents:")
-    scontentslabel.grid(row=choicesrow, column=0, sticky=tk.W)
-    scontentsstringvar = tk.StringVar(value="; ".join(active_settings.get("contents", [])))
-    scontentsentry = ttk.Entry(choicesframe, textvariable=scontentsstringvar)
-    scontentsentry.grid(row=choicesrow, column=1, sticky=tk.W+tk.E)
-    choiceentries["contents"] = scontentsstringvar
-    choicesrow += 1
-
-    seditionslabel = ttk.Label(choicesframe, text="Editions:")
-    seditionslabel.grid(row=choicesrow, column=0, sticky=tk.W)
-    seditionsstringvar = tk.StringVar(value="; ".join(active_settings.get("editions", [])))
-    seditionsentry = ttk.Entry(choicesframe, textvariable=seditionsstringvar)
-    seditionsentry.grid(row=choicesrow, column=1, sticky=tk.W+tk.E)
-    choiceentries["editions"] = seditionsstringvar
-    choicesrow += 1
+    choicesrow = populate_context_setup(choicesframe, choiceentries, choicesrow, contextframe)
 
     exclusionframe = ttk.LabelFrame(setup_tab, text="Columns", padding="8")
     exclusionframe.grid(row=setuprow, column=0, sticky=tk.W+tk.E)
