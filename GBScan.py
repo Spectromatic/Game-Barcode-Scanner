@@ -179,7 +179,6 @@ def game_accept():
     selected_title = active_title.get()
     selected_platform = get_platform_key()
     selected_contents = get_contents()
-    selected_format = get_format()
     
     # Move the "The" to the end if the title starts with "The " and it's enabled in settings
     if selected_title.startswith("The ") and is_toggled('use_the_suffix'):
@@ -195,16 +194,20 @@ def game_accept():
     else:
         contents['Contents'] = selected_contents
 
+    contexts = {}
+    for context in get_all_contexts():
+        if context == "contents":
+            continue  # Skip contents since it's already handled
+        context_singular = context[:-1] if context.endswith('s') else context
+        contexts[str(context_singular).capitalize()] = get_context_data(context)
+
     # Prepare the data to write to the file
     data = {
         "Title": [selected_title],
         "Release Date": [active_game_data.get('release_date')] if active_game_data.get('release_date') else "",
         "Platform": get_platform_name() if is_toggled('use_full_platform_name') else get_platform_key(),
         **contents,
-        "Condition": get_condition(),
-        "Case Condition": get_case_condition(),
-        "Format": selected_format,
-        "Edition": get_edition(),
+        **contexts,
         "Developer": [active_game_data.get('developer')] if active_game_data.get('developer') else "",
         "Payed": [active_game_data.get('payed')] if active_game_data.get('payed') else "",
         "Value": [active_contexts.get('price')] if active_contexts.get('price') else "",
@@ -239,7 +242,12 @@ def game_accept():
     }
     
     # Re-order the columns based on the order in the settings
-    ordered_data = {key: data[key] for key in active_settings['column_order'] if key in data}
+    ordered_data = {}
+    for key in active_settings.get('column_order', []):
+        for data_key in data.keys():
+            if str(data_key).lower() == str(key).lower():
+                ordered_data[data_key] = data[data_key]
+                break
 
     df = pd.DataFrame(ordered_data)
 
@@ -306,7 +314,7 @@ def get_contents():
         return None
     return active_settings["context"]["contents"][active_selections.get("contents", tk.IntVar()).get()]
 
-def get_contexts():
+def get_fixed_contexts():
     if active_settings is None:
         return {}
     return active_settings.get("context", {}).keys()
@@ -316,10 +324,24 @@ def get_context_options(key) -> list:
         return []
     return active_settings.get("context", {}).get(key, []) if key in active_settings.get("context", {}) else active_settings.get("custom_context", {}).get(key, [])
 
+def get_context_data(key):
+    if active_settings is None:
+        return []
+    context = "context" if key in active_settings.get("context", {}) else "custom_context" if key in active_settings.get("custom_context", {}) else None
+    return active_settings[context][key][active_selections.get(key, tk.IntVar()).get()] if context else []
+
 def get_custom_contexts():
     if active_settings is None:
         return {}
     return active_settings.get("custom_context", {}).keys()
+
+def get_all_contexts():
+    if active_settings is None:
+        return {}
+    all_contexts = {}
+    all_contexts.update(active_settings.get("context", {}))
+    all_contexts.update(active_settings.get("custom_context", {}))
+    return all_contexts
 
 def get_custom_context_data(context):
     if active_settings is None:
@@ -673,7 +695,7 @@ def open_platform_defaults_window():
     add_frame = ttk.LabelFrame(frame, text="Add Platform Default")
     add_frame.grid(row=0, column=0, columnspan=2, sticky="nsew", padx=4, pady=4)
 
-    settings_keys = list(dict.fromkeys(list(get_contexts()) + list(get_custom_contexts())))
+    settings_keys = list(dict.fromkeys(list(get_fixed_contexts()) + list(get_custom_contexts())))
 
     platforms_with_default = get_platforms() + ["Default"]
     ttk.Label(add_frame, text="Platform").grid(row=0, column=0, padx=4, pady=2, sticky="w")
@@ -800,7 +822,7 @@ def populate_context_frames(contextframe, contextrow, contextlist, frames) -> in
     contextlist.append(("platforms", platform_frame))
     contextrow += 1
 
-    for context in get_contexts():
+    for context in get_fixed_contexts():
         frame = ttk.Frame(contextframe, padding="2")
         frame.grid(row=contextrow, column=0, sticky=tk.W+tk.E)
         frames.append(frame)
@@ -824,7 +846,7 @@ def populate_context_setup(frame, entries, row_idx, main_contextframe) -> int:
     for child in frame.winfo_children():
         child.destroy()
     
-    for context_choice in get_contexts():
+    for context_choice in get_fixed_contexts():
         label = ttk.Label(frame, text=f"{context_choice.capitalize()}:")
         label.grid(row=row_idx, column=0, sticky=tk.W)
         stringvar = tk.StringVar(value="; ".join(active_settings.get("context", {}).get(context_choice, [])))
