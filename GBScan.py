@@ -619,6 +619,45 @@ def open_column_order_window():
     close_button = ttk.Button(column_order_frame, text="Close", command=column_order_window.destroy)
     close_button.grid(row=2, column=0, columnspan=2, sticky="nsew", padx=4, pady=4)
 
+def open_custom_colors_window():
+    if active_settings is None:
+        return
+    
+    custom_colors_window = tk.Toplevel(class_="GBScan")
+    custom_colors_window.title("GBScan - Edit Custom Colors")
+    custom_colors_window.columnconfigure(0, weight=1)
+    custom_colors_window.rowconfigure(0, weight=1)
+
+    frame = ttk.LabelFrame(custom_colors_window, text="Custom Colors")
+    frame.grid(row=0, column=0, sticky="nsew", padx=4, pady=4)
+    frame.columnconfigure(0, weight=1)
+    frame.columnconfigure(1, weight=3)
+
+    theming = active_settings.setdefault("theming", {})
+    custom_colors = theming.setdefault("custom_colors", {})
+    
+    for i, (key, color) in enumerate(custom_colors.items()):
+        ttk.Label(frame, text=key).grid(row=i, column=0, sticky="nsew", padx=4, pady=4)
+        color_var = tk.StringVar(value=color)
+        color_entry = ttk.Entry(frame, textvariable=color_var)
+        color_entry.grid(row=i, column=1, sticky="nsew", padx=4, pady=4)
+
+        def update_color(event=None,key=key, var=color_var):
+            new_color = var.get()
+            if re.fullmatch(r'#?[0-9a-fA-F]{6}', new_color):
+                if not new_color.startswith('#'):
+                    new_color = '#' + new_color
+                custom_colors[key] = new_color
+                settings_save()
+            else:
+                messagebox.showerror("Invalid Color", f"{new_color} is not a valid hex color.")
+
+        color_entry.bind("<FocusOut>", update_color)
+        color_entry.bind("<Return>", update_color)
+
+    close_button = ttk.Button(frame, text="Close", command=custom_colors_window.destroy)
+    close_button.grid(row=len(custom_colors), column=0, columnspan=2, sticky="nsew", padx=4, pady=4)
+
 def open_exclusion_window():
     global _exclusion_image_refs
     if active_settings is None:
@@ -2070,11 +2109,12 @@ def main():
 
     choicesrow = populate_context_setup(choicesframe, choiceentries, choicesrow, contextframe)
 
-    exclusionframe = ttk.LabelFrame(setup_tab, text="Columns", padding="8")
+    exclusionframe = ttk.LabelFrame(setup_tab, text="Tweaks", padding="8")
     exclusionframe.grid(row=setuprow, column=0, sticky=tk.W+tk.E)
     exclusionframe.columnconfigure(0, weight=1)
     exclusionframe.columnconfigure(1, weight=1)
     exclusionframe.columnconfigure(2, weight=1)
+    exclusionframe.columnconfigure(3, weight=1)
     frames_padded.append(exclusionframe)
     setuprow += 1
 
@@ -2086,6 +2126,9 @@ def main():
 
     edefaultsbutton = ttk.Button(exclusionframe, text="Edit Platform Defaults", command=lambda: open_platform_defaults_window())
     edefaultsbutton.grid(row=0, column=2, sticky="nsew")
+
+    ecustomcolorsbutton = ttk.Button(exclusionframe, text="Edit Custom Colors", command=lambda: open_custom_colors_window())
+    ecustomcolorsbutton.grid(row=0, column=3, sticky="nsew")
 
     # Display all the toggles from the settings file
     togglesframe = ttk.LabelFrame(setup_tab, text="Toggles", padding="8")
