@@ -82,11 +82,20 @@ def context_add(frame, entries, row_idx = 0, main_contextframe=None):
     if not new_context:
         return
     
+    key = new_context.lower()
+    
     # Add the new context to the settings
-    active_settings.setdefault("custom_context", {})[new_context.lower()] = []
+    active_settings.setdefault("custom_context", {})[key] = []
+
+    # Duplicate fallback color into custom_colors so this context gets its own color
+    theming = active_settings.setdefault("theming", {})
+    custom_colors = theming.setdefault("custom_colors", {})
+    fallback = custom_colors.get("custom_context_fallback", "#00AAAA")
+    if key not in custom_colors:
+        custom_colors[key] = fallback
 
     # Add the new context to the column order
-    if new_context.lower() not in [col.lower() for col in active_settings.get("column_order", [])]:
+    if key not in [col.lower() for col in active_settings.get("column_order", [])]:
         active_settings.setdefault("column_order", []).append(new_context)
     
     # Update the UI to reflect the new context
@@ -98,12 +107,17 @@ def context_add(frame, entries, row_idx = 0, main_contextframe=None):
 def context_delete(frame, entries, context_choice, main_contextframe=None):
     if active_settings is None:
         return
+
+    key = context_choice.lower()
+
+    # Remove the duplicated custom color
+    active_settings["theming"]["custom_colors"].pop(key, None)
     
     # Remove the context from the settings
-    active_settings.setdefault("custom_context", {}).pop(context_choice.lower(), None)
+    active_settings.setdefault("custom_context", {}).pop(key, None)
 
     # Remove the context from the column order
-    active_settings["column_order"] = [col for col in active_settings.get("column_order", []) if col.lower() != context_choice.lower()]
+    active_settings["column_order"] = [col for col in active_settings.get("column_order", []) if col.lower() != key]
     
     # Update the UI to reflect the removed context
     settings_save()
@@ -302,7 +316,7 @@ def get_case_condition():
 def get_color(name, default):
     if active_settings is None:
         return default
-    return active_settings["theming"]["custom_colors"].get(name, default) if is_toggled("use_custom_colors") else default
+    return active_settings["theming"]["custom_colors"].get(name, active_settings["theming"]["custom_colors"].get("custom_context_fallback", "#00AAAA")) if is_toggled("use_custom_colors") else default
 
 def get_condition():
     if active_settings is None:
