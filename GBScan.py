@@ -223,7 +223,7 @@ def game_accept():
         **contents,
         **contexts,
         "Developer": [active_game_data.get('developer')] if active_game_data.get('developer') else "",
-        "Payed": [active_game_data.get('payed')] if active_game_data.get('payed') else "",
+        "Payed": [active_contexts.get('payed')] if active_contexts.get('payed') else "",
         "Value": [active_contexts.get('price')] if active_contexts.get('price') else "",
         "DOS": [active_specs.get('DOS', '')] if active_specs else "",
         "3.1": [active_specs.get('3.1', '')] if active_specs else "",
@@ -1645,6 +1645,7 @@ def search_game(query):
     else:
         active_contexts.setdefault('upc', '')
         print("Debug: No UPC found from search query or item page.")
+    active_contexts['payed'] = ""
     
     def finish():
         update_button_states("normal")
