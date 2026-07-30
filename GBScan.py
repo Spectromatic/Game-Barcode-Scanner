@@ -54,23 +54,34 @@ def button_select_all(event=None):
     return "break"
 
 def clear_infoframe():
-    global infoframe
+    global infoframe, active_game_data, active_taxonomy, active_contexts, active_title, active_perspective
     if infoframe is None:
+        return
+    
+    if active_settings is None:
         return
     
     # Clear the info frame
     for widget in infoframe.winfo_children():
         widget.destroy()
-    
+
     if not active_game_data:
-        for i in range(6):
-            for j in range(3):
-                empty_label = ttk.Label(infoframe, text="", style=f"InfoData{'Even' if (i) % 2 == 0 else 'Odd'}.TLabel")
-                empty_label.grid(row=i, column=j*2, sticky="nsew")
-                empty_label = ttk.Label(infoframe, text="", style=f"InfoData{'Even' if (i) % 2 == 0 else 'Odd'}.TLabel")
-                empty_label.grid(row=i, column=j*2+1, sticky="nsew")
-                infoframe.columnconfigure(j*2, weight=0 if j*2 % 2 == 0 else 1, minsize=100 if j*2 % 2 == 0 else 10)
-                infoframe.columnconfigure(j*2+1, weight=0 if (j*2+1) % 2 == 0 else 1, minsize=100 if (j*2+1) % 2 == 0 else 10)
+        # Set using types from settings (preserve list vs scalar)
+        active_game_data = {k: "" for k, v in active_settings.get("scraped_data", {}).items()}
+        active_taxonomy = {k: "" for k, v in active_settings.get("taxonomy", {}).items()}
+
+        # Set common physical/context fields and any custom contexts
+        active_contexts = {}
+        for k in get_all_contexts():
+            active_contexts[k] = get_context_data(k)
+        for ctx in ("payed", "price", "upc"):
+            active_contexts[ctx] = ""
+
+        active_title = None
+        active_perspective = None
+
+        # Render the Add-buttons via the existing renderer
+        update_info_frame()
         return
 
 def context_add(frame, entries, row_idx = 0, main_contextframe=None):
@@ -131,13 +142,19 @@ def cycle_selection(name, direction=1):
     var = active_selections.get(name)
     if not isinstance(var, tk.IntVar):
         return
-    options = active_settings.get(name, [])
+    if name == "platforms":
+        options = get_platforms()
+    elif name in (active_settings.get("taxonomy") or {}):
+        options = get_taxonomy_data(name)
+    else:
+        options = get_context_options(name)
     if not options:
         return
     var.set((var.get() + direction) % len(options))
 
 def cycle_setup(name, direction):
     def handler(event):
+        print(f"Debug: Cycling setup for {name} in direction {direction}")
         cycle_selection(name, direction)
         if searchentry is not None:
             searchentry.focus_set()
@@ -186,11 +203,7 @@ def game_accept():
         handle_error("No game data available.")
         return
     
-    if active_title is None:
-        handle_error("No title available.")
-        return
-    
-    selected_title = active_title.get()
+    selected_title = active_game_data.get('title', '').strip() if active_game_data.get('title') else ''
     selected_platform = get_platform_key()
     selected_contents = get_contents()
     
@@ -214,6 +227,17 @@ def game_accept():
             continue  # Skip contents since it's already handled
         context_singular = context[:-1] if context.endswith('s') else context
         contexts[str(context_singular).capitalize()] = get_context_data(context)
+
+    taxonomies = {}
+    for taxonomy in get_taxonomy_keys():
+        taxonomies[str(taxonomy).capitalize()] = active_taxonomy.get(taxonomy)
+
+    # Set Singleplayer, Multiplayer, and Co-op based on taxonomy if they exist
+    if is_toggled('use_playercount_split'):
+        #taxonomies.pop('Player', None)  # Remove the combined 'Player' taxonomy if it exists
+        active_game_data['singleplayer'] = active_settings['symbols']['yes'] if str(active_taxonomy.get('player')).rfind('SP') != -1 else active_settings['symbols']['no']
+        active_game_data['multiplayer'] = active_settings['symbols']['yes'] if str(active_taxonomy.get('player')).rfind('MP') != -1 else active_settings['symbols']['no']
+        active_game_data['coop'] = active_settings['symbols']['yes'] if str(active_taxonomy.get('player')).rfind('Coop') != -1 else active_settings['symbols']['no']
 
     # Prepare the data to write to the file
     data = {
@@ -241,16 +265,12 @@ def game_accept():
         "Playable": [active_specs.get('Playable', '')] if active_specs else "",
         "Spawnable": [active_specs.get('Spawnable', '')] if active_specs else "",
         "Force Feedback": [active_specs.get('Force Feedback', '')] if active_specs else "",
-        "Dimension": [active_taxonomy.get('Dimension')] if active_taxonomy.get('Dimension') else "",
-        "Time": [active_taxonomy.get('pacing')] if active_taxonomy.get('pacing') else "",
-        "Perspective": [active_perspective.get()] if isinstance(active_perspective, tk.StringVar) else [str(active_perspective)] if str(active_perspective) else "",
-        "Setting": [active_taxonomy.get('setting')] if active_taxonomy.get('setting') else "",
-        "Genre": [active_taxonomy.get('genre')] if active_taxonomy.get('genre') else "",
-        "Co-op": [active_game_data.get('coop')] if active_game_data.get('coop') is not None else "",
-        "Multiplayer": [active_game_data.get('multiplayer')] if active_game_data.get('multiplayer') is not None else "",
-        "Singleplayer": [active_game_data.get('singleplayer')] if active_game_data.get('singleplayer') is not None else "",
-        "Gameplay": [active_taxonomy.get('gameplay')] if active_taxonomy.get('gameplay') else "",
-        "Moby Score": [active_taxonomy.get('moby_score')] if active_taxonomy.get('moby_score') else "",
+        "Coop": active_game_data.get('coop') if active_game_data.get('coop') is not None else "",
+        "Multiplayer": active_game_data.get('multiplayer') if active_game_data.get('multiplayer') is not None else "",
+        "Singleplayer": active_game_data.get('singleplayer') if active_game_data.get('singleplayer') is not None else "",
+        **taxonomies,
+        "Genre": active_taxonomy.get('genre') if active_taxonomy.get('genre') else "",
+        "Moby Score": active_taxonomy.get('moby_score') if active_taxonomy.get('moby_score') else "",
         "Added": [pd.Timestamp.now().strftime("%Y-%m-%d")],
         "UPC": [active_contexts.get('upc')] if active_contexts.get('upc') else ""
     }
@@ -375,6 +395,88 @@ def get_format():
 def get_game(query):
     threading.Thread(target=search_game, args=(query,), daemon=True).start()
 
+def get_game_data(query, platform=None):
+    if active_settings is None:
+        handle_error("Settings file is missing")
+        return
+
+    use_xls = is_toggled('use_xls')
+    xls_collate = is_toggled('use_xls_collate_sheets')
+
+    platform = str(platform) if platform else str(get_platform_key())
+    df = pd.DataFrame()  # Initialize an empty DataFrame
+
+    # build filename
+    if use_xls:
+        file_name = "scanned_collection.xlsx" if xls_collate else f"{platform}_scanned_collection.xlsx"
+    else:
+        file_name = f"{platform}_scanned_collection.csv"
+
+    if use_xls:
+        result = pd.read_excel(file_name, sheet_name=platform, engine="openpyxl", dtype=str)
+        df = result[platform] if isinstance(result, dict) else result
+    else:
+        df = pd.read_csv(file_name, sep="\t", dtype=str)
+
+    # Try both UPC and title
+    if is_upc(query):
+        # If the query is a UPC, search in the "UPC" column
+        upc_col = next((c for c in df.columns if c.lower() == "upc"), None)
+        if upc_col:
+            return df[df[upc_col] == query].tail(1)
+        else:
+            handle_error("UPC column not found in the data.")
+            return pd.DataFrame()  # Return an empty DataFrame if UPC column is missing
+
+    title_col = next((c for c in df.columns if c.lower() == "title"), df.columns[0])
+    q = str(query).strip().lower()
+    df = df.fillna('')
+    exact_match = df[df[title_col].str.strip().str.lower() == q]
+    if not exact_match.empty:
+        print(f"Debug: Found exact match for query '{query}'")
+        matches = exact_match.copy()
+        matches = matches.to_frame().T if isinstance(matches, pd.Series) else matches
+        matches.columns = handle_normalized_cols(matches.columns)
+        return matches.iloc[0]
+    contains_match = df[df[title_col].str.strip().str.lower().str.contains(q, na=False)]
+    if not contains_match.empty:
+        print(f"Debug: Found contains match for query '{query}'")
+        matches = contains_match.copy()
+        matches = matches.to_frame().T if isinstance(matches, pd.Series) else matches
+        matches.columns = handle_normalized_cols(matches.columns)
+        return matches.iloc[0]
+    
+    handle_error(f"{query} not found.")
+    return None
+
+def get_options_for_key(key):
+    if active_settings is None:
+        return []
+    if key in active_settings.get("context", {}):
+        return active_settings["context"][key]
+    if key in active_settings.get("custom_context", {}):
+        return active_settings["custom_context"][key]
+    if key in active_settings.get("taxonomy", {}):
+        return active_settings["taxonomy"][key]
+    return []
+
+def get_os_prefix() -> str:
+    if active_settings is None:
+        return ""
+    os = get_platform_key()
+    return active_settings.get("OS", {}).get(os, {}).get("prefix", "") if os else ""
+
+def get_all_os_versions() -> dict:
+    if active_settings is None:
+        return {}
+    return {os: active_settings.get("OS", {}).get(os, {}).get("versions", []) for os in active_settings.get("OS", {})}
+
+def get_os_versions() -> list:
+    if active_settings is None:
+        return []
+    os = get_platform_key()
+    return active_settings.get("OS", {}).get(os, {}).get("versions", []) if os else []
+
 def get_platform_key():
     if active_settings is None:
         return None
@@ -396,6 +498,26 @@ def get_response(url, timeout=100, **kwargs):
     except requests.RequestException as e:
         handle_error(f"Error fetching URL: {url}\n{e}")
         return None
+    
+def get_taxonomy_keys() -> list:
+    if active_settings is None:
+        return []
+    return list(active_settings.get("taxonomy", {}).keys())
+
+def get_taxonomy_data(key):
+    if active_settings is None:
+        return {}
+    return active_settings.get("taxonomy", {}).get(key, [])
+
+def get_taxonomy_default_idx(key: str) -> int:
+    if active_settings is None:
+        return 0
+    defaults = active_settings.get("platform_defaults", {})
+    platform_defaults = defaults.get(get_platform_key(), defaults.get("Default", {}))
+    idx = 0
+    if key in platform_defaults:
+        idx = int(platform_defaults[key])
+    return idx
 
 def handle_accept_key(root, event):
         if isinstance(root.focus_get(), (ttk.Entry, tk.Entry)):
@@ -426,16 +548,21 @@ def handle_missing_field(widget, key):
     if text.startswith("Add "):
         widget.destroy()
 
-    entry = ttk.Entry(parent)
+    var = tk.StringVar()
+    entry = ttk.Entry(parent, textvariable=var)
     entry.grid(row=row, column=column, sticky="nsew")
     # Ensure focus after the event loop finishes
     parent.after_idle(entry.focus_set)
     # store the live entry widget so identity checks work
     missing_fields[key] = entry
 
-    def on_submit(event=None):
-        update_info_choice(key, entry.get().strip())
-        update_info_frame()
+    def on_submit(event=None, k=key, v=var):
+        v.set(v.get().strip())
+        update_info_choice(k, v)
+        if k.lower() == "title" and acceptbutton is not None and declinebutton is not None:
+            state = "normal" if v.get().strip() else "disabled"
+            acceptbutton.config(state=state)
+            declinebutton.config(state=state)
 
     entry.bind("<Return>", on_submit)
     entry.bind("<FocusOut>", on_submit)
@@ -448,12 +575,16 @@ def handle_missing_upc_shortcut(event=None):
         return
     
     # Find the row with the UPC entry
-    for child in infoframe.winfo_children():
-        if isinstance(child, ttk.Button) and child.cget("text") == "Add UPC":
-            child.invoke()
-            return "break"
+    upc_widget = missing_fields.get('upc')
+    if upc_widget:
+        upc_widget.focus_set()
+        return "break"
     
     return None
+
+def handle_normalized_cols(cols):
+    # Normalize column names to lowercase and stripped of whitespace
+    return [str(col).replace(" ", "_").strip().lower().strip('_') for col in cols]
 
 def handle_single_option(options):
     # Handle the case where there is only one option available
@@ -466,7 +597,7 @@ def handle_single_option(options):
     # If it's not a single option, just return the list back
     return ", ".join(str(x) for x in options)
 
-def handle_tab_key(root, event):
+def handle_tab_key(root, event, direction=1):
     print("Debug: Tab key pressed - cycling through missing fields")
     # Cycle through the missing field entries when Tab is pressed
     if not missing_fields:
@@ -488,11 +619,15 @@ def handle_tab_key(root, event):
 
     # If we're not currently focused in any of the missing-field entries, focus the first one
     if focused_index is None:
-        next_key = keys[0]
+        next_key = keys[0] if direction > 0 else keys[-1]
         widget = missing_fields[next_key]
 
         if isinstance(widget, ttk.Button):
-            handle_missing_field(widget, next_key)
+            entry = handle_missing_field(widget, next_key)
+            if entry:
+                root.after_idle(entry.focus_set)
+            else:
+                widget.focus_set()
             print(f"Debug: No missing field focused, focusing first missing field: {next_key}")
         else:
             widget.focus_set()
@@ -503,24 +638,20 @@ def handle_tab_key(root, event):
     current_key = keys[focused_index]
     if isinstance(focused_widget, (ttk.Entry, tk.Entry)):
         update_info_choice(current_key, focused_widget.get().strip())
-        # rebuild the UI to rebuild the missing_fields dict with the updated values and widgets
-        update_info_frame()
 
-        # next key based on the previous list
-        next_idx = (focused_index + 1) % len(keys)
-        next_key = keys[next_idx]
-        if next_key in missing_fields:
-            widget = missing_fields[next_key]
-            if isinstance(widget, ttk.Button):
-                entry = handle_missing_field(widget, next_key)
-                if entry:
-                    root.after_idle(entry.focus_set)
-            else:
-                missing_fields[next_key].focus_set()
+    # Once done, move to the next key based on the previous list
+    next_idx = (focused_index + direction) % len(keys)
+    next_key = keys[next_idx]
+    if next_key in missing_fields:
+        widget = missing_fields[next_key]
+        if isinstance(widget, ttk.Button):
+            entry = handle_missing_field(widget, next_key)
+            if entry:
+                root.after_idle(entry.focus_set)
+        else:
+            widget.focus_set()
 
-        return "break"
-    
-    return
+    return "break"
 
 def handle_toggle_change(toggle):
     if active_settings is None:
@@ -531,6 +662,11 @@ def handle_toggle_change(toggle):
     # Update the context choices if a toggle change affects them
     update_choices(changes=True)
     settings_save()
+
+def is_os():
+    if active_settings is None:
+        return False
+    return get_platform_key() in active_settings.get("OS", {})
 
 def is_toggled(toggle):
     if active_settings is None:
@@ -740,36 +876,59 @@ def open_platform_defaults_window():
     platform_defaults_window.columnconfigure(0, weight=1)
     platform_defaults_window.rowconfigure(0, weight=1)
 
-    frame = ttk.Frame(platform_defaults_window)
+    platform_defaults_frame = ttk.Frame(platform_defaults_window)
+    platform_defaults_frame.grid(row=0, column=0, sticky="nsew", padx=4, pady=4)
+    platform_defaults_frame.columnconfigure(0, weight=1)
+    platform_defaults_frame.rowconfigure(0, weight=1)
+
+    platform_defaults_notebook = ttk.Notebook(platform_defaults_frame)
+    platform_defaults_notebook.grid(row=0, column=0, sticky="nsew")
+
+    # Tabs
+    contexts_tab = ttk.Frame(platform_defaults_notebook)
+    taxonomy_tab = ttk.Frame(platform_defaults_notebook)
+    platform_defaults_notebook.add(contexts_tab, text="Context Defaults")
+    platform_defaults_notebook.add(taxonomy_tab, text="Taxonomy Defaults")
+
+    # Key lists
+    context_keys = list(dict.fromkeys(get_all_contexts()))
+    taxonomy_keys = list(dict.fromkeys(get_taxonomy_keys()))
+
+    ########################
+    # Context Defaults Tab #
+    ########################
+    frame = ttk.Frame(contexts_tab)
     frame.grid(row=0, column=0, sticky="nsew", padx=4, pady=4)
     frame.columnconfigure(0, weight=1)
     frame.columnconfigure(1, weight=3)
 
-    add_frame = ttk.LabelFrame(frame, text="Add Platform Default")
-    add_frame.grid(row=0, column=0, columnspan=2, sticky="nsew", padx=4, pady=4)
+    context_add_frame = ttk.LabelFrame(frame, text="Add Platform Default")
+    context_add_frame.grid(row=0, column=0, columnspan=2, sticky="nsew", padx=4, pady=4)
 
-    settings_keys = list(dict.fromkeys(list(get_fixed_contexts()) + list(get_custom_contexts())))
+    context_keys = list(dict.fromkeys(get_all_contexts()))
 
     platforms_with_default = get_platforms() + ["Default"]
-    ttk.Label(add_frame, text="Platform").grid(row=0, column=0, padx=4, pady=2, sticky="w")
-    for i, key in enumerate(settings_keys, start=1):
-        ttk.Label(add_frame, text=key.replace("_", " ").title()).grid(row=0, column=i, padx=4, pady=2, sticky="w")
+    ttk.Label(context_add_frame, text="Platform").grid(row=0, column=0, padx=4, pady=2, sticky="w")
+    for i, key in enumerate(context_keys, start=1):
+        ttk.Label(context_add_frame, text=key.replace("_", " ").title()).grid(row=0, column=i, padx=4, pady=2, sticky="w")
 
     add_platform_var = tk.StringVar(value=platforms_with_default[0] if platforms_with_default else "Default")
-    add_platform_menu = ttk.OptionMenu(add_frame, add_platform_var, add_platform_var.get(), *platforms_with_default)
+    add_platform_menu = ttk.OptionMenu(context_add_frame, add_platform_var, add_platform_var.get(), *platforms_with_default)
+    add_platform_menu.configure(padding=(4, 0))
     add_platform_menu.grid(row=1, column=0, padx=4, pady=4, sticky="w")
 
     # Create a dropdown for each settings key and store the StringVar in a dictionary for later retrieval
     add_setting_vars = {}
-    for i, key in enumerate(settings_keys, start=1):
-        options = get_context_options(key)
+    for i, key in enumerate(context_keys, start=1):
+        options = get_options_for_key(key)
         var = tk.StringVar(value=options[0] if options else "")
-        menu = ttk.OptionMenu(add_frame, var, var.get(), *options)
+        menu = ttk.OptionMenu(context_add_frame, var, var.get(), *options)
+        menu.configure(padding=(0, 0))
         menu.config(width=len(max(options, key=len)) + 2 if options else 10)
-        menu.grid(row=1, column=i, padx=2, pady=4, sticky="w")
+        menu.grid(row=1, column=i, padx=2, pady=2, sticky="w")
         add_setting_vars[key] = var
 
-    def default_add():
+    def default_add_context():
         if active_settings is None:
             return
         platform = add_platform_var.get()
@@ -777,23 +936,81 @@ def open_platform_defaults_window():
             return
         new_defaults = {}
         for key, var in add_setting_vars.items():
-            options = get_context_options(key)
+            options = get_options_for_key(key)
             idx = options.index(var.get()) if var.get() in options else 0
             new_defaults[key] = idx
         active_settings.setdefault("platform_defaults", {})[platform] = new_defaults
         settings_save()
-        populate_platform_defaults_list(list_frame, settings_keys)
+        populate_platform_defaults_list(context_list_frame, context_keys)
 
-    add_button = ttk.Button(add_frame, text="Add Default", command=default_add)
-    add_button.grid(row=1, column=len(settings_keys) + 1, padx=4, pady=4, sticky="w")
+    # Add Default button for context defaults
+    context_add_button = ttk.Button(context_add_frame, text="Add Default", command=default_add_context)
+    context_add_button.configure(padding=(0, 0))
+    context_add_button.grid(row=1, column=len(context_keys) + 1, padx=4, pady=4, sticky="w")
 
     # Create list for the existing defaults
-    list_frame = ttk.LabelFrame(frame, text="Current Defaults")
-    list_frame.grid(row=1, column=0, sticky="nsew", padx=4, pady=4)
+    context_list_frame = ttk.LabelFrame(contexts_tab, text="Current Defaults")
+    context_list_frame.grid(row=1, column=0, sticky="nsew", padx=4, pady=4)
+    populate_platform_defaults_list(context_list_frame, context_keys)
 
-    populate_platform_defaults_list(list_frame, settings_keys)
+    #########################
+    # Taxonomy Defaults Tab #
+    #########################
+    taxonomy_add_frame = ttk.LabelFrame(taxonomy_tab, text="Add / Update Default")
+    taxonomy_add_frame.grid(row=0, column=0, sticky="nsew", padx=4, pady=2)
 
-    close_button = ttk.Button(frame, text="Close", command=platform_defaults_window.destroy)
+    taxonomy_keys = list(dict.fromkeys(get_taxonomy_keys()))
+    
+    # Platform label for taxonomy defaults
+    ttk.Label(taxonomy_add_frame, text="Platform").grid(row=0, column=0, padx=4, pady=2, sticky="w")
+    
+    # Row of labels for each taxonomy key
+    for i, key in enumerate(taxonomy_keys, start=1):
+        ttk.Label(taxonomy_add_frame, text=key.replace("_", " ").title()).grid(row=0, column=i, padx=4, pady=2, sticky="w")
+
+    # Platform dropdown
+    add_platform_var2 = tk.StringVar(value=platforms_with_default[0] if platforms_with_default else "Default")
+    add_platform_menu2 = ttk.OptionMenu(taxonomy_add_frame, add_platform_var2, add_platform_var2.get(), *platforms_with_default)
+    add_platform_menu2.configure(padding=(4, 0))
+    add_platform_menu2.grid(row=1, column=0, padx=4, pady=2, sticky="w")
+
+    # Dropdowns for each taxonomy key
+    add_setting_vars_tax = {}
+    for i, key in enumerate(taxonomy_keys, start=1):
+        options = get_options_for_key(key)
+        var = tk.StringVar(value=options[0] if options else "")
+        menu = ttk.OptionMenu(taxonomy_add_frame, var, var.get(), *options)
+        menu.configure(padding=(0, 0))
+        menu.config(width=len(max(options, key=len)) + 2 if options else 10)
+        menu.grid(row=1, column=i, padx=2, pady=2, sticky="w")
+        add_setting_vars_tax[key] = var
+
+    def default_add_taxonomy():
+        if active_settings is None:
+            return
+        platform = add_platform_var2.get()
+        if not platform:
+            return
+        new_defaults = {}
+        for k, v in add_setting_vars_tax.items():
+            options = get_options_for_key(k)
+            idx = options.index(v.get()) if v.get() in options else 0
+            new_defaults[k] = idx
+        active_settings.setdefault("platform_defaults", {})[platform] = {**active_settings.setdefault("platform_defaults", {}).get(platform, {}), **new_defaults}
+        settings_save()
+        populate_platform_defaults_list(taxonomy_list_frame, taxonomy_keys)
+
+    # Add Default button for taxonomy defaults
+    taxonomy_add_button = ttk.Button(taxonomy_add_frame, text="Add Default", command=default_add_taxonomy)
+    taxonomy_add_button.configure(padding=(0, 0))
+    taxonomy_add_button.grid(row=1, column=len(taxonomy_keys) + 1, padx=4, pady=0, sticky="w")
+
+    # Create list for the existing taxonomy defaults
+    taxonomy_list_frame = ttk.LabelFrame(taxonomy_tab, text="Current Defaults")
+    taxonomy_list_frame.grid(row=1, column=0, sticky="nsew", padx=4, pady=4)
+    populate_platform_defaults_list(taxonomy_list_frame, taxonomy_keys)
+
+    close_button = ttk.Button(platform_defaults_frame, text="Close", command=platform_defaults_window.destroy)
     close_button.grid(row=2, column=0, sticky="nsew", padx=4, pady=4)
 
 def populate_context_choices(frame, name):
@@ -938,7 +1155,7 @@ def populate_platform_defaults_list(frame, settings_keys):
     def default_edit(platform, key, var):
         if active_settings is None:
             return
-        options = get_context_options(key)
+        options = get_options_for_key(key)
         idx = options.index(var.get()) if var.get() in options else 0
         active_settings.setdefault("platform_defaults", {}).setdefault(platform, {})[key] = idx
         settings_save()
@@ -953,21 +1170,23 @@ def populate_platform_defaults_list(frame, settings_keys):
     for i, (platform, settings) in enumerate(active_settings.setdefault("platform_defaults", {}).items()):
         platform_name = platform
         row_frame = ttk.Frame(frame)
-        row_frame.grid(sticky="nsew", padx=4, pady=4)
-        ttk.Label(row_frame, text=platform_name, width=15).grid(row=0, column=0, padx=4, pady=4, sticky="w")
+        row_frame.grid(sticky="nsew", padx=4, pady=2)
+        ttk.Label(row_frame, text=platform_name, width=15).grid(row=0, column=0, padx=4, pady=2, sticky="w")
         for j, key in enumerate(settings_keys, start=1):
-            options = get_context_options(key)
+            options = get_options_for_key(key)
             idx = settings.get(key, 0)
             var = tk.StringVar(value=options[idx] if options else "")
             menu = ttk.OptionMenu(row_frame, var, var.get(), *options)
+            menu.configure(padding=(0, 0))
             menu.config(width=len(max(options, key=len)) + 2 if options else 10)
-            menu.grid(row=0, column=j, padx=2, pady=4, sticky="w")
+            menu.grid(row=0, column=j, padx=2, pady=2, sticky="w")
 
             # Add trace to update the settings when the dropdown value changes
             var.trace_add("write", lambda *args, p=platform, k=key, v=var: default_edit(p, k, v))
         
         delete_button = ttk.Button(row_frame, text="Delete", command=lambda p=platform: default_remove(p))
-        delete_button.grid(row=0, column=len(settings_keys) + 1, padx=4, pady=4, sticky="w")
+        delete_button.configure(padding=(0, 0))
+        delete_button.grid(row=0, column=len(settings_keys) + 1, padx=4, pady=2, sticky="w")
 
 def populate_platform_mapping_list(frame, platform_list=None, window=None):
     if active_settings is None:
@@ -1101,6 +1320,34 @@ def populate_selections(frame, i, offset, current_selection, value, key, label_c
 
     return active_selection, offset
 
+def populate_taxonomy_setup(frame, entries, row_idx):
+    if active_taxonomy is None:
+        return row_idx
+    
+    # Clear existing widgets in the frame
+    for child in frame.winfo_children():
+        child.destroy()
+
+    for taxonomy_key in get_taxonomy_keys():
+        label = ttk.Label(frame, text=f"{taxonomy_key.capitalize()}:")
+        label.grid(row=row_idx, column=0, sticky=tk.W)
+        stringvar = tk.StringVar(value="; ".join(get_taxonomy_data(taxonomy_key)))
+        entry = ttk.Entry(frame, textvariable=stringvar)
+        entry.grid(row=row_idx, column=1, sticky=tk.W+tk.E)
+        entries[taxonomy_key] = stringvar
+        del_btn = ttk.Button(frame, text="Delete", padding=(0, 0), command=lambda c=taxonomy_key: taxonomy_delete(frame, entries, c))
+        del_btn.grid(row=row_idx, column=2, sticky=tk.W)
+        row_idx += 1
+
+    addtaxonomybutton = ttk.Button(frame, text="Add Taxonomy", command=lambda: taxonomy_add(frame, entries, row_idx))
+    addtaxonomybutton.grid(row=row_idx, column=0, sticky="nsew", columnspan=3)
+    row_idx += 1
+
+    for child in frame.winfo_children():
+        child.grid_configure(padx=4, pady=4)
+
+    return row_idx
+
 def populate_toggles(frame):
     if active_settings is None:
         return
@@ -1109,9 +1356,14 @@ def populate_toggles(frame):
     toggle_column = 0
     toggle_row = 0
     toggles = active_settings.get("toggles", {})
+    toggle_descs = active_settings.get("toggle_descriptions", {})
     for toggle, value in toggles.items():
-        btn = ttk.Checkbutton(frame, text=toggle.replace("_", " ").title(), variable=tk.BooleanVar(value=value), command=lambda t=toggle: handle_toggle_change(t))
+        var = tk.BooleanVar(value=value)
+        btn = ttk.Checkbutton(frame, text=toggle.replace("_", " ").title(), variable=var, command=lambda t=toggle: handle_toggle_change(t))
         btn.grid(row=toggle_row, column=toggle_column, sticky=tk.W)
+        tooltip_text = toggle_descs.get(toggle, "")
+        if tooltip_text:
+            Tooltip(btn, text=tooltip_text)
         toggle_column += 1
         if toggle_column >= max_columns:
             toggle_column = 0
@@ -1132,29 +1384,16 @@ def recall_log_item(event=None):
     title = vals[0] if len(vals) > 0 else ""
     platform = vals[2] if len(vals) > 2 else ""
 
-    if active_settings is None:
-        handle_error("Settings file is missing")
+    match = get_game_data(title, platform)
+    if match is None:
+        handle_error(f"No matching row found for '{title}' on platform '{platform}' in the log.")
         return
-
-    use_xls = is_toggled('use_xls')
-    xls_collate = is_toggled('use_xls_collate_sheets')
-
-    if use_xls:
-        file_name = "scanned_collection.xlsx" if xls_collate else f"{platform}_scanned_collection.xlsx"
-        df = pd.read_excel(file_name, sheet_name=platform, engine="openpyxl", dtype=str)
-    else:
-        file_name = f"{platform}_scanned_collection.csv"
-        df = pd.read_csv(file_name, sep="\t", dtype=str)
-
-    title_col = next((c for c in df.columns if c.lower() == "title"), df.columns[0])
-
-    # Choose the last matching row
-    selected_row = df[df[title_col] == title].tail(1)
-    clipboard_data = selected_row.to_csv(sep="\t", index=False, header=False)
+    
+    clipboard_data = match.to_csv(sep="\t", index=False, header=False)
 
     pyperclip.copy(clipboard_data)
 
-    messagebox.showinfo("Recalled", f"Copied latest matching row for '{title}' to clipboard from {file_name}")
+    messagebox.showinfo("Recalled", f"Copied latest matching row for '{title}' to clipboard")
 
 def rotated_text_image(text, font_size=12, font_path=None):
     font = ImageFont.truetype(font_path, font_size) if font_path else ImageFont.load_default()
@@ -1289,7 +1528,7 @@ def scrape_game_data(game_url):
         return None
     
     active_game_data = {key: value for key, value in active_settings.get("scraped_data", {}).items()}
-    active_taxonomy = {key: value for key, value in active_settings.get("scraped_taxonomy", {}).items()}
+    active_taxonomy = {key: value for key, value in active_settings.get("taxonomy", {}).items()}
     print(f"Debug: Initial Game Data: {active_game_data}")
     print(f"Debug: Initial Taxonomy Data: {active_taxonomy}")
 
@@ -1334,20 +1573,24 @@ def scrape_game_data(game_url):
     print(f"Debug: Physical Data: {active_contexts}")
     return active_game_data
 
-def scrape_min_os(soup, dict={}):
+def scrape_min_os(soup, dict={}, os=None):
     os_spec = soup.find('td', string='Minimum OS Class Required:')
     
     if os_spec is None:
         print("Debug: Minimum OS Class not found.")
         return None
+    
+    if active_settings is None:
+        return None
+    
+    if os is None:
+        return None
 
     # List of operating systems
-    os_to_check = ['DOS', '3.1', '95', '98', 'ME', '2000', 'XP', 'Vista', '7', '8', '10']
-
+    os_to_check = get_os_versions()
     os_list = []
-
     os_version = os_spec.find_next_sibling('td').text.strip()
-    os_version = os_version.replace('Windows ', '')
+    os_version = os_version.replace(get_os_prefix(), "")
     print(f"Debug: Found OS Version: {os_version}")
     os_list.append(os_version)
     
@@ -1507,7 +1750,7 @@ def scrape_price_pricecharting(barcode):
 
     return (price if price else None, item_link)
 
-def scrape_specs(game_url):
+def scrape_specs(game_url, os=None):
     game_url = f"{game_url}/specs"
     response = get_response(game_url)
     if response is None:
@@ -1521,7 +1764,7 @@ def scrape_specs(game_url):
         return None
 
     scraped_specs = {}
-    scraped_specs = scrape_min_os(specs, scraped_specs) or scraped_specs
+    scraped_specs = scrape_min_os(specs, scraped_specs, os) or scraped_specs
     scraped_specs = scrape_dx(specs, scraped_specs) or scraped_specs
 
     if scraped_specs is not None:
@@ -1591,48 +1834,38 @@ def scrape_upc(game_url):
     return upc   
 
 def search_game(query):
-    global active_specs
+    global active_game_data, active_taxonomy, active_contexts, active_title, active_perspective
+    active_game_data = {}
+    active_taxonomy = {}
+    active_contexts = {}
     
     if active_settings is None:
         return None
 
-    search_url = f"https://www.mobygames.com/search/?q={query}"
-    response = get_response(search_url)
-    if response is None:
+    match = get_game_data(query)
+    if match is None:
+        handle_error(f"No matching game found for query '{query}'")
         return None
-    soup = bs.BeautifulSoup(response.text, 'html.parser')
-    
-    # Find the first search result link
-    results = soup.find_all('table', {'class': 'table mb'})
 
-    # Use platform mapping to convert the platform name to the format used on Mobygames
-    platform_name = get_platform_name()
+    active_game_data['title'] = match.get('title', "")
+    active_game_data['developer'] = match.get('developer', "")
+    active_game_data['release_date'] = match.get('release_date', "")
+    active_game_data['publisher'] = match.get('publisher', "")
 
-    url = None
-    # Find the URL that matches the selected platform
-    for result in results:
-        platform_tags = result.find_all('small')
-        for platform_tag in platform_tags:
-            if platform_name not in platform_tag.text:
-                continue
+    for taxonomy_key in get_taxonomy_keys():
+        active_taxonomy[taxonomy_key] = match.get(taxonomy_key, "")
 
-            exact_result = platform_tag.find_previous('a')
-            url = exact_result['href']
-            print(f"Debug: Found URL: {url}")
-            break
-
-    if url is None:
-        handle_error(f"No results found for {query} for {platform_name}")
-        return None
-    
-    active_game_data = scrape_game_data(url)
-    if active_game_data is None:
-        handle_error("Failed to scrape game data.")
-        return None
-    
-    # Only the specs for PC titles
-    if platform_name and platform_name.lower() in ["pc", "windows"]:
-        active_specs = scrape_specs(url)
+    # Get the context data from the match or use the default values if not found
+    for context in get_all_contexts():
+        context_singular = context[:-1] if context.endswith("s") else context
+        active_contexts[context] = match.get(context_singular, get_context_data(context))
+        # Update context selections based on the active_contexts
+        if context in active_selections:
+            options = get_context_options(context)
+            if options:
+                idx = options.index(active_contexts[context])
+                active_selections[context].set(idx)
+        print(f"Debug: Context '{context_singular}': {active_contexts[context]}")
 
     #active_physical_data['price'] = scrape_prices(url)
     active_contexts['price'], item_link = scrape_price_pricecharting(query)
@@ -1668,12 +1901,13 @@ def selections_update(name, value):
     old_content = active_contexts.get("content", "").lower()
 
     for setting in active_contexts.keys():
-        setting_plural = setting + "s"
+        setting_plural = (setting + "s") if not setting.endswith("s") else setting
         options = get_context_options(setting_plural)
         if not options:
             continue
         active_contexts[setting] = options[active_selections.get(setting_plural, tk.IntVar()).get()]
 
+    # Refetch the price if the condition or content has changed in a way that affects the price
     if name in ("conditions", "contents"):
         new_condition = (active_contexts.get("condition") or "").lower()
         new_content = (active_contexts.get("content") or "").lower()
@@ -1729,10 +1963,72 @@ def settings_set_defaults(platform_index:int = 0):
     platform_defaults = platform_settings.get(platform_key, platform_settings.get("Default", {}))
 
     for setting, value in platform_defaults.items():
+        # Contexts
         if isinstance(active_selections.get(setting), tk.IntVar):
             active_selections[setting].set(value)
+            continue
+
+        # Taxonomy
+        if setting in active_settings.get("taxonomy", {}):
+            options = active_settings.get("taxonomy", {}).get(setting, "")
+            idx = int(value) if isinstance(value, int) else 0
+            idx = max(0, min(idx, len(options) - 1))  # Ensure idx is within bounds
+            active_taxonomy[setting] = options[idx] if options else ""
+            continue
+
+    update_info_frame()
 
     return
+
+def taxonomy_add(frame, entries, row_idx=0):
+    global active_settings, active_taxonomy
+    if active_settings is None:
+        return
+    
+    new_field = simpledialog.askstring("Add Taxonomy", "Enter the name of the new taxonomy field:")
+    if not new_field:
+        return
+    
+    key = new_field.lower()
+    active_settings.setdefault("taxonomy", {})[key] = []
+
+    # Add title-case version to column_order
+    key_title_case = new_field.title()
+    column_order_lower = [c.lower() for c in active_settings.setdefault("column_order", [])]
+    
+    if key not in column_order_lower:
+        column_order = active_settings.setdefault("column_order", [])
+        column_order.append(key_title_case)
+        active_settings["column_order"] = column_order
+
+    settings_save()
+    populate_taxonomy_setup(frame, entries, row_idx)
+    
+    # Rebuild active_taxonomy
+    for k, v in active_settings.get("taxonomy", {}).items():
+        active_taxonomy[k] = v
+    update_info_frame()
+
+def taxonomy_delete(frame, entries, taxonomy_choice):
+    global active_settings, active_taxonomy
+    if active_settings is None:
+        return
+    
+    key = taxonomy_choice.lower()
+    active_settings.setdefault("taxonomy", {}).pop(key, None)
+
+    # Remove any matching column_order entries (case-insensitive)
+    column_order = active_settings.setdefault("column_order", [])
+    column_order[:] = [c for c in column_order if c.lower() != key.lower()]
+    active_settings["column_order"] = column_order
+
+    settings_save()
+    populate_taxonomy_setup(frame, entries, 0)
+
+    # Rebuild active_taxonomy
+    for k, v in active_settings.get("taxonomy", {}).items():
+        active_taxonomy[k] = v
+    update_info_frame()
 
 def update_button_states(state):
     # Find the search frame in the frames_padded list and update the state of the buttons
@@ -1746,16 +2042,19 @@ def update_button_states(state):
             if isinstance(child, ttk.Button):
                 child.config(state=state)
 
-def update_choices(choiceentries = None, changes=False):
+def update_choices(contextentries = None, taxonomyentries = None, changes=False):
     # Update the choices for context selection
     global active_settings
     if active_settings is None:
         return
 
-    if choiceentries is None:
-        choiceentries = {}
+    if contextentries is None:
+        contextentries = {}
 
-    for context_choice, entry in choiceentries.items():
+    if taxonomyentries is None:
+        taxonomyentries = {}
+
+    for context_choice, entry in contextentries.items():
         # We save the changes for platforms elsewhere, so always assume there are changes
         if context_choice == "platforms":
             changes = True
@@ -1781,33 +2080,35 @@ def update_choices(choiceentries = None, changes=False):
             active_settings.setdefault("custom_context", {})[context_choice] = choices
             changes = True
 
+    for taxonomy, entry in taxonomyentries.items():
+        # Get the text in the entry and split it by semicolons
+        text = entry.get()
+        choices = [t.strip() for t in text.split(";") if t.strip()]
+        if taxonomy in active_settings.get("taxonomy", {}):
+            if active_settings.get("taxonomy", {}).get(taxonomy) == choices:
+                continue
+
+            active_settings.setdefault("taxonomy", {})[taxonomy] = choices
+            changes = True
+
     if not changes:
         return
 
     settings_save()
     for key, frame in contextlist:
-        if choiceentries and key not in choiceentries:
+        if contextentries and key not in contextentries:
             continue
         
         # clear existing widgets so populate_menu doesn't duplicate
         for child in frame.winfo_children():
             child.destroy()
         populate_context_choices(frame, key)
+    update_info_frame()
 
 def update_info_choice(key, value):
     global active_title, active_perspective
     selected_value = value if isinstance(value, str) else value.get()
-    if key == 'title' and isinstance(active_game_data.get('title'), list):
-        if active_title is None or not isinstance(active_title, tk.StringVar):
-            active_title = tk.StringVar(value=selected_value)
-        else:
-            active_title.set(selected_value)
-    elif key == 'perspective' and isinstance(active_taxonomy.get('perspective'), list):
-        if active_perspective is None or not isinstance(active_perspective, tk.StringVar):
-            active_perspective = tk.StringVar(value=selected_value)
-        else:
-            active_perspective.set(selected_value)
-    elif key in active_game_data:
+    if key in active_game_data:
         active_game_data[key] = selected_value
     elif key in active_taxonomy:
         active_taxonomy[key] = selected_value
@@ -1820,7 +2121,6 @@ def update_info_frame():
         return
     
     if active_settings is None:
-        handle_error("Settings file is missing")
         return
     
     clear_infoframe()
@@ -1830,9 +2130,7 @@ def update_info_frame():
     active_taxonomy_items = list(active_taxonomy.items())
     active_physical_items = list(active_contexts.items())
 
-    extra_titles = max(len(active_game_data.get('title', [])) - 1, 0)
-    extra_perspectives = max(len(active_taxonomy.get('perspective', [])) - 1, 0)
-    max_rows = max(len(active_game_items) + extra_titles, len(active_taxonomy_items) + extra_perspectives, len(active_physical_items))
+    max_rows = max(len(active_game_items), len(active_taxonomy_items), len(active_physical_items))
 
     current_title = active_title.get() if isinstance(active_title, tk.StringVar) else None
     current_perspective = active_perspective.get() if isinstance(active_perspective, tk.StringVar) else None
@@ -1841,39 +2139,76 @@ def update_info_frame():
     active_taxonomy_offset = 0
     active_physical_data_offset = 0
     # Update the info frame with the current game data
-    for i in range(max_rows - extra_titles):
+    for i in range(max_rows):
         key, value = active_game_items[i] if i < len(active_game_items) else ("", "")
         row = i + active_game_data_offset
         suffix = ":" if key else ""
         data_label = ttk.Label(infoframe, text=handle_ellipsis(handle_single_option(f"{key.capitalize()}{suffix}")), style=f"InfoData{'Even' if row % 2 == 0 else 'Odd'}.TLabel")
         data_label.grid(row=row, column=0, sticky="nsew")
 
-        if key and key.lower() == 'title' and len(value) > 1:
-            active_title, active_game_data_offset = populate_selections(infoframe, i, active_game_data_offset, current_title, value, 'title', 0, 1)
-        elif key and not value and not isinstance(value, list):
-            add_btn = ttk.Button(infoframe, text=f"Add {key.capitalize()}", padding=(0, 0))
-            add_btn.grid(row=row, column=1, sticky="nsew")
-            add_btn.config(command=lambda r=row, k=key: handle_missing_field(add_btn, k))
-            missing_fields[key] = add_btn
+        if key and not value:
+            var = tk.StringVar(value="")
+            entry = ttk.Entry(infoframe, textvariable=var)
+            entry.grid(row=row, column=1, sticky="nsew")
+            missing_fields[key] = entry
+
+            def _on_submit_game(event=None, k=key, v=var):
+                v.set(v.get().strip())
+                update_info_choice(k, v)
+                if k.lower() == "title" and acceptbutton is not None and declinebutton is not None:
+                    state = "normal" if v.get().strip() else "disabled"
+                    acceptbutton.config(state=state)
+                    declinebutton.config(state=state)
+
+            entry.bind("<Return>", _on_submit_game)
+            entry.bind("<FocusOut>", _on_submit_game)
+            entry.bind("<Escape>", lambda e: update_info_frame())
         else:
             value_label = ttk.Label(infoframe, text=handle_ellipsis(handle_single_option(value)), style=f"InfoData{'Even' if row % 2 == 0 else 'Odd'}.TLabel")
             value_label.grid(row=row, column=1, sticky="nsew")
 
     # Update the info frame with the current taxonomy data
-    for j in range(max_rows - extra_perspectives):
+    for j in range(max_rows):
         key, value = active_taxonomy_items[j] if j < len(active_taxonomy_items) else ("", "")
         row = j + active_taxonomy_offset
         suffix = ":" if key else ""
         data_label = ttk.Label(infoframe, text=handle_ellipsis(f"{key.capitalize()}{suffix}"), style=f"InfoData{'Even' if row % 2 == 0 else 'Odd'}.TLabel")
         data_label.grid(row=row, column=2, sticky="nsew")
+        options = get_taxonomy_data(key) if key else []
 
-        if key and key.lower() == 'perspective' and len(value) > 1:
-            active_perspective, active_taxonomy_offset = populate_selections(infoframe, j, active_taxonomy_offset, current_perspective, value, 'perspective', 2, 3)
-        elif key and not value and not isinstance(value, list):
-            add_btn = ttk.Button(infoframe, text=f"Add {key.capitalize()}", padding=(0, 0))
-            add_btn.grid(row=row, column=3, sticky="nsew")    
-            add_btn.config(command=lambda r=row, k=key: handle_missing_field(add_btn, k))
-            missing_fields[key] = add_btn
+        if key and options:
+            pd_idx = get_taxonomy_default_idx(key)
+            platform_default = options[pd_idx] if options and 0 <= pd_idx < len(options) else None
+
+            # initial selection preference: explicit value > platform default > first option > empty
+            
+            initial = value if value and value in options else (platform_default if platform_default in options else (options[0] if options else ""))
+
+            var = tk.StringVar(value=initial)
+            update_info_choice(key, initial)  # Ensure the initial value is set in active_taxonomy
+            menu = ttk.OptionMenu(infoframe, var, var.get(), *options)
+            menu.configure(padding=(0, 0))
+            menu.grid(row=row, column=3, sticky="nsew")
+
+            missing_fields[key] = menu
+
+            var.trace_add("write", lambda *args, k=key, v=var: update_info_choice(k, v))
+            
+            def _make_cycle_handler(opts, v, direction):
+                def handler(event):
+                    if not opts:
+                        return "break"
+                    try:
+                        i = opts.index(v.get())
+                    except ValueError:
+                        i = 0
+                    i = (i + direction) % len(opts)
+                    v.set(opts[i])
+                    return "break"
+                return handler
+
+            menu.bind("<Up>", _make_cycle_handler(options, var, -1))
+            menu.bind("<Down>", _make_cycle_handler(options, var, 1))
         else:
             value_label = ttk.Label(infoframe, text=handle_ellipsis(handle_single_option(value)), style=f"InfoData{'Even' if row % 2 == 0 else 'Odd'}.TLabel")
             value_label.grid(row=row, column=3, sticky="nsew")
@@ -1886,10 +2221,18 @@ def update_info_frame():
         data_label = ttk.Label(infoframe, text=handle_ellipsis(f"{key.capitalize()}{suffix}"), style=f"InfoData{'Even' if row % 2 == 0 else 'Odd'}.TLabel")
         data_label.grid(row=row, column=4, sticky="nsew")
         if key and not value:
-            add_btn = ttk.Button(infoframe, text=f"Add {key.capitalize() if key != 'upc' else 'UPC'}", padding=(0, 0))
-            add_btn.grid(row=row, column=5, sticky="nsew")
-            add_btn.config(command=lambda r=row, k=key: handle_missing_field(add_btn, k))
-            missing_fields[key] = add_btn
+            var = tk.StringVar(value="")
+            entry = ttk.Entry(infoframe, textvariable=var)
+            entry.grid(row=row, column=5, sticky="nsew")
+            missing_fields[key] = entry
+
+            def _on_submit_phys(event=None, k=key, v=var):
+                v.set(v.get().strip())
+                update_info_choice(k, v)
+
+            entry.bind("<Return>", _on_submit_phys)
+            entry.bind("<FocusOut>", _on_submit_phys)
+            entry.bind("<Escape>", lambda e: update_info_frame())
         else:
             value_label = ttk.Label(infoframe, text=handle_ellipsis(f"{value}"), style=f"InfoData{'Even' if row % 2 == 0 else 'Odd'}.TLabel")
             value_label.grid(row=row, column=5, sticky="nsew")
@@ -1900,7 +2243,9 @@ def update_info_frame():
     for row in range(rows):
         infoframe.rowconfigure(row, weight=1, minsize=20)
 
-def write_new_headers(data, existing_data):
+    infoframe.update_idletasks()
+
+def write_new_headers(data, existing_data: pd.DataFrame):
     desired_order_cols = []
     if active_settings and isinstance(active_settings, dict):
         desired_order_cols = [c for c in (active_settings.get('column_order') or []) if isinstance(c, str)]
@@ -2081,12 +2426,12 @@ def main():
     declinebutton.grid(row=0, column=4, sticky=tk.W)
 
     # Setup Tab where the user can set edit the settings.json file
-    setup_tab = ttk.Frame(main_notebook, padding="8")
+    setup_tab = ttk.Frame(main_notebook, padding="4")
     setup_tab.columnconfigure(0, weight=1)
     setuprow = 0
-    choiceentries = {}
+    contextentries = {}
 
-    platformsframe = ttk.Frame(setup_tab, padding="8")
+    platformsframe = ttk.Frame(setup_tab, padding="4")
     platformsframe.grid(row=setuprow, column=0, sticky=tk.W+tk.E)
     platformsframe.columnconfigure(1, weight=1)
     frames_padded.append(platformsframe)
@@ -2099,18 +2444,28 @@ def main():
     splatformsentry.grid(row=0, column=1, sticky=tk.W+tk.E)
     splatformseditbutton = ttk.Button(platformsframe, text="Edit", command=lambda: open_platform_mapping_window(splatformsstringvar))
     splatformseditbutton.grid(row=0, column=2, sticky=tk.W)
-    choiceentries["platforms"] = splatformsstringvar
+    contextentries["platforms"] = splatformsstringvar
 
-    choicesframe = ttk.LabelFrame(setup_tab, text="Contexts", padding="8")
+    choicesframe = ttk.LabelFrame(setup_tab, text="Contexts", padding="4")
     choicesframe.grid(row=setuprow, column=0, sticky=tk.W+tk.E)
     choicesframe.columnconfigure(1, weight=1)
     frames_padded.append(choicesframe)
     setuprow += 1
     choicesrow = 0
 
-    choicesrow = populate_context_setup(choicesframe, choiceentries, choicesrow, contextframe)
+    choicesrow = populate_context_setup(choicesframe, contextentries, choicesrow, contextframe)
 
-    exclusionframe = ttk.LabelFrame(setup_tab, text="Tweaks", padding="8")
+    taxonomyentries = {}
+    taxonomyframe = ttk.LabelFrame(setup_tab, text="Taxonomy", padding="4")
+    taxonomyframe.grid(row=setuprow, column=0, sticky=tk.W+tk.E)
+    taxonomyframe.columnconfigure(1, weight=1)
+    frames_padded.append(taxonomyframe)
+    setuprow += 1
+    taxonomyrow = 0
+
+    taxonomyrow = populate_taxonomy_setup(taxonomyframe, taxonomyentries, taxonomyrow)
+
+    exclusionframe = ttk.LabelFrame(setup_tab, text="Tweaks", padding="4")
     exclusionframe.grid(row=setuprow, column=0, sticky=tk.W+tk.E)
     exclusionframe.columnconfigure(0, weight=1)
     exclusionframe.columnconfigure(1, weight=1)
@@ -2132,13 +2487,13 @@ def main():
     ecustomcolorsbutton.grid(row=0, column=3, sticky="nsew")
 
     # Display all the toggles from the settings file
-    togglesframe = ttk.LabelFrame(setup_tab, text="Toggles", padding="8")
+    togglesframe = ttk.LabelFrame(setup_tab, text="Toggles", padding="4")
     togglesframe.grid(row=setuprow, column=0, sticky=tk.W+tk.E)
     frames_padded.append(togglesframe)
     setuprow += 1
     populate_toggles(togglesframe)
 
-    symbolsframe = ttk.LabelFrame(setup_tab, text="Symbols", padding="8")
+    symbolsframe = ttk.LabelFrame(setup_tab, text="Symbols", padding="4")
     symbolsframe.grid(row=setuprow, column=0, sticky=tk.W+tk.E)
     frames_padded.append(symbolsframe)
     setuprow += 1
@@ -2191,22 +2546,24 @@ def main():
     root.bind_all('<Delete>', lambda event: handle_decline_key(root, event))
     root.bind_all('<Control-q>', lambda event: root.quit())
     root.bind_all('<Insert>', handle_missing_upc_shortcut)
-    root.bind('<Tab>', lambda event: handle_tab_key(root, event))
+    root.bind('<Tab>', lambda event: handle_tab_key(root, event, 1))
+    root.bind('<Shift-Tab>', lambda event: handle_tab_key(root, event, -1))
+    root.bind('<ISO_Left_Tab>', lambda event: handle_tab_key(root, event, -1))
     if searchentry is not None:
         root.bind_all('<Control-a>', button_select_all)
 
-    main_notebook.bind("<<NotebookTabChanged>>", lambda event: update_choices(choiceentries))
+    main_notebook.bind("<<NotebookTabChanged>>", lambda event: update_choices(contextentries, taxonomyentries))
 
     # Get the shortcuts and bind them, with and without shift if applicable
     shortcuts = active_settings.get("shortcuts", {}) if active_settings else {}
     for name, key in shortcuts.items():
-        root.bind_all(f"<{key}>", cycle_setup(name, 1))
+        root.bind_all(f"<{key}>", cycle_setup(name, 1), add="+")
         if not key.startswith("shift-"):
-            root.bind_all(f"<Shift-{key}>", cycle_setup(name, -1))
+            root.bind_all(f"<Shift-{key}>", cycle_setup(name, -1), add="+")
 
     for frame in frames_padded:
         for child in frame.winfo_children():
-            child.grid_configure(padx=4, pady=4)
+            child.grid_configure(padx=2, pady=2)
 
     root.after(0, settings_set_defaults)
     root.mainloop()

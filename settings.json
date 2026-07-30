@@ -69,27 +69,29 @@
         ]
     },
     "custom_context": {},
-    "taxonomy_mapping": {
-        "dimension": "dimension",
-        "time": [
-            "pacing",
-            "time"
-        ],
-        "perspective": [
-            "perspective",
-            "visual"
-        ],
-        "movement": "movement",
-        "setting": "setting",
-        "genre": "genre",
-        "gameplay": "gameplay",
-        "type": "type"
-    },
     "taxonomy": {
+        "player": [
+            "SP",
+            "MP",
+            "SP/MP",
+            "Coop",
+            "SP/Coop",
+            "MP/Coop",
+            "MMO"
+        ],
+        "style": [
+            "Cartoony",
+            "Realistic",
+            "Stylized"
+        ],
         "dimension": [
             "2D",
+            "2D on 3D",
             "2.5D",
-            "3D"
+            "3D",
+            "3D on 2D",
+            "FMV",
+            "Pre-rendered"
         ],
         "time": [
             "Real-Time",
@@ -107,35 +109,102 @@
             "Top-Down",
             "Side-Scrolling"
         ],
+        "progression": [
+            "Branching",
+            "Hub & Spoke",
+            "Linear",
+            "Non-Linear",
+            "Open World"
+        ],
         "movement": [
             "Free-Roaming",
             "Grid-Based",
             "On-Rails",
             "Stationary"
         ],
-        "setting": [
+        "era": [
+            "Prehistoric",
+            "Ancient",
+            "Classical",
+            "Roman",
+            "Iron Age",
+            "Viking",
+            "Medieval",
+            "Sengoku",
+            "Renaissance",
+            "Industrial",
+            "WWI",
+            "WWII",
             "Contemporary",
-            "Fantasy",
-            "Sci-Fi",
-            "Historical",
-            "Post-Apoc",
-            "Horror",
-            "War / Military",
-            "Western"
+            "Retro-Futuristic",
+            "Near-Future",
+            "Far-Future",
+            "Indeterminate"
         ],
-        "genre": [
-            "Action",
-            "Adventure",
-            "RPG",
-            "Simulation",
-            "Strategy",
+        "setting": [
+            "Arctic",
+            "Desert",
+            "Expansive",
+            "Forest",
+            "Jungle",
+            "Rural",
+            "Space",
+            "Stadium",
+            "Suburban",
+            "Toy",
+            "Urban"
+        ],
+        "theme": [
+            "Alien Invasion",
+            "Crime",
+            "Cyberpunk",
+            "Everyday",
+            "Fantasy",
+            "Historical",
+            "Horror",
+            "Mystery",
+            "Pirate",
+            "Post-Apoc",
+            "Raypunk",
+            "Sci-Fi",
             "Sports",
-            "Puzzle"
+            "Spy / Espionage",
+            "Steampunk",
+            "Superhero",
+            "War / Military",
+            "Western",
+            "Zombie"
+        ],
+        "objective": [
+            "4X",
+            "Collect-a-thon",
+            "Competitive",
+            "Expansion",
+            "Exploration",
+            "Extermination",
+            "Extraction",
+            "High Score",
+            "Objective-Based",
+            "Survival",
+            "Timetrial"
         ],
         "gameplay": [
+            "Adventure",
+            "Battle Royale",
+            "Beat 'Em Up",
+            "Bullet Hell",
+            "Card Game",
+            "City Builder",
+            "Construction & Management",
+            "Dating Sim",
+            "Deck Builder",
+            "Dungeon Crawler",
+            "Farming",
             "Fighting",
             "Flying",
             "Hack & Slash",
+            "Hidden Object",
+            "Hunting",
             "Looter Shooter",
             "Platforming",
             "Point & Click Adventure",
@@ -149,8 +218,82 @@
         ],
         "type": [
             "Game",
-            "Simulator"
+            "Simulator",
+            "Puzzle"
         ]
+    },
+    "taxonomy_mapping": {
+        "FPS": {
+            "time": "Real-Time",
+            "perspective": "1st Person",
+            "gameplay": "Shooting"
+        },
+        "TPS": {
+            "time": "Real-Time",
+            "perspective": "3rd Person",
+            "gameplay": "Shooting"
+        },
+        "Blobber": {
+            "time": "Turn-Based",
+            "perspective": "1st Person",
+            "movement": "Grid-Based"
+        },
+        "RTS": {
+            "time": "Real-Time",
+            "gameplay": "Strategy"
+        },
+        "RPG": {
+            "gameplay": "Role-Playing"
+        },
+        "Platformer": {
+            "time": "Real-Time",
+            "gameplay": "Platforming"
+        }
+    },
+    "OS": {
+        "Amiga": {
+            "prefix": "Kickstart ",
+            "versions": [
+                "1.0",
+                "1.1",
+                "1.2",
+                "1.3",
+                "2.0",
+                "3.0",
+                "3.1",
+                "3.5",
+                "3.9"
+            ]
+        },
+        "DOS": {
+            "prefix": "PC/MS-DOS ",
+            "versions": [
+                "1.0",
+                "2.0",
+                "3.0",
+                "3.1",
+                "4.0",
+                "5.0",
+                "6.0",
+                "6.22"
+            ]
+        },
+        "PC": {
+            "prefix": "Windows ",
+            "versions": [
+                "3.1",
+                "95",
+                "98",
+                "ME",
+                "2000",
+                "XP",
+                "Vista",
+                "Win7",
+                "Win8",
+                "Win10",
+                "Win11"
+            ]
+        }
     },
     "column_order": [
         "Title",
@@ -184,15 +327,22 @@
         "Playable",
         "Spawnable",
         "Force Feedback",
-        "Dimension",
-        "Time",
-        "Perspective",
-        "Setting",
-        "Genre",
-        "Gameplay",
         "Coop",
         "Multiplayer",
         "Singleplayer",
+        "Player",
+        "Style",
+        "Dimension",
+        "Time",
+        "Perspective",
+        "Progression",
+        "Movement",
+        "Era",
+        "Setting",
+        "Theme",
+        "Objective",
+        "Gameplay",
+        "Type",
         "Played",
         "Completed",
         "Rating",
@@ -217,22 +367,13 @@
             "Win10",
             "Copy Protection",
             "Spawnable",
-            "Force Feedback",
-            "Coop",
-            "Multiplayer",
-            "Singleplayer"
+            "Force Feedback"
         ],
         "Switch": [
             "Condition",
             "Singleplayer",
             "Multiplayer",
             "Coop"
-        ],
-        "PC": [
-            "Case Condition",
-            "Coop",
-            "Multiplayer",
-            "Singleplayer"
         ]
     },
     "symbols": {
@@ -245,72 +386,133 @@
             "conditions": 4,
             "case_conditions": 2,
             "contents": 0,
-            "editions": 0
+            "editions": 0,
+            "objective": 4,
+            "progression": 2,
+            "era": 16,
+            "setting": 3,
+            "theme": 4,
+            "gameplay": 17,
+            "dimension": 3,
+            "style": 2
         },
         "Switch": {
             "formats": 6,
             "conditions": 8,
             "case_conditions": 0,
             "contents": 1,
-            "editions": 0
+            "editions": 0,
+            "gameplay": 17,
+            "objective": 1,
+            "theme": 4,
+            "era": 12,
+            "progression": 3,
+            "dimension": 3,
+            "style": 2,
+            "setting": 5
         },
         "DS": {
             "formats": 6,
             "conditions": 8,
             "case_conditions": 0,
             "contents": 0,
-            "editions": 0
+            "editions": 0,
+            "objective": 4,
+            "theme": 4,
+            "era": 6,
+            "progression": 3,
+            "dimension": 3,
+            "setting": 5
         },
         "3DS": {
             "formats": 6,
             "conditions": 8,
             "case_conditions": 0,
             "contents": 0,
-            "editions": 0
+            "editions": 0,
+            "objective": 4,
+            "theme": 4,
+            "era": 6,
+            "progression": 3,
+            "dimension": 3,
+            "setting": 5
         },
         "GB": {
             "formats": 6,
             "conditions": 8,
             "case_conditions": 0,
             "contents": 7,
-            "editions": 0
+            "editions": 0,
+            "objective": 7,
+            "theme": 4,
+            "era": 6,
+            "progression": 3,
+            "setting": 5
         },
         "PSP": {
             "formats": 6,
             "conditions": 1,
             "case_conditions": 0,
             "contents": 0,
-            "editions": 0
+            "editions": 0,
+            "style": 1,
+            "objective": 8,
+            "theme": 11,
+            "era": 14,
+            "setting": 10,
+            "progression": 2,
+            "perspective": 1,
+            "dimension": 3
         },
         "Default": {
             "formats": 1,
             "conditions": 3,
             "case_conditions": 0,
             "contents": 0,
-            "editions": 0
+            "editions": 0,
+            "style": 1,
+            "dimension": 3,
+            "era": 12,
+            "setting": 2,
+            "theme": 1,
+            "objective": 8,
+            "gameplay": 24,
+            "progression": 2
         },
         "GBA": {
             "conditions": 3,
             "case_conditions": 0,
             "contents": 0,
             "editions": 0,
-            "formats": 1
+            "formats": 1,
+            "objective": 7,
+            "theme": 4,
+            "era": 6,
+            "progression": 3
         },
         "PS2": {
             "conditions": 4,
             "case_conditions": 0,
             "contents": 1,
             "editions": 0,
-            "formats": 1
+            "formats": 1,
+            "dimension": 3,
+            "style": 1,
+            "perspective": 1,
+            "progression": 2,
+            "era": 12,
+            "setting": 9,
+            "theme": 1,
+            "objective": 4,
+            "gameplay": 17
         }
     },
     "scraped_data": {
         "title": [],
         "release_date": 1900,
         "developer": "",
-        "coop": false,
-        "multiplayer": false,
-        "singleplayer": false
+        "publisher": "",
+        "rating": 0
     },
     "scraped_taxonomy": {
         "perspective": [],
@@ -318,7 +520,9 @@
         "genre": "",
         "setting": "",
         "gameplay": "",
-        "moby_score": 0.0
+        "coop": false,
+        "multiplayer": false,
+        "singleplayer": false
     },
     "toggles": {
         "use_the_suffix": true,
@@ -330,7 +534,21 @@
         "use_custom_ttk_theme": true,
         "use_custom_colors": true,
         "use_dx_point_drop": true,
-        "use_pal": true
+        "use_pal": true,
+        "use_taxonomy": true,
+        "use_playercount_split": true
+    },
+    "toggle_descriptions": {
+        "use_the_suffix": "Move leading 'The' to the end of the saved title.",
+        "use_xls": "Write output to an XLS file instead of CSV.",
+        "use_clipboard": "Copy new rows to the clipboard after saving.",
+        "use_custom_ttk_theme": "Apply the configured ttk theme.",
+        "use_custom_colors": "Use custom colors for context buttons.",
+        "use_content_split": "Split contents (case/sleeve/manual) into separate columns.",
+        "use_full_platform_name": "Save the full platform name instead of the key in the output.",
+        "use_pal": "Prefer PAL platform names when scraping prices.",
+        "use_taxonomy": "Enable taxonomy fields.",
+        "use_playercount_split": "Split player taxonomy (SP/MP/Coop) into separate columns."
     },
     "theming": {
         "ttk_theme": "clam",
