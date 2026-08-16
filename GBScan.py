@@ -8,6 +8,10 @@ import bs4 as bs
 import pandas as pd
 import tkinter as tk
 import threading
+import webbrowser
+
+from io import BytesIO
+from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont, ImageTk
 from tkinter import ttk
 from tkinter import messagebox, simpledialog
@@ -37,6 +41,48 @@ logframe = None
 logtree = None
 _exclusion_image_refs = []
 missing_fields = {}
+thumbnail_label = None
+thumbnail_image = None
+thumbnail_tooltip = None
+
+def add_moby_id(key):
+    print(f"Debug: Adding Moby ID")
+    global active_game_data
+    if not active_game_data:
+        handle_error("No game data available.")
+        return
+
+    moby_id = simpledialog.askstring("Add MobyGames ID", f"Enter the MobyGames ID for '{active_game_data.get('title', '')}':")
+    if moby_id is None:
+        return
+
+    moby_id = moby_id.strip()
+    if not moby_id.isdigit():
+        print(f"Debug: Invalid Moby ID '{moby_id}' provided.")
+        return
+
+    moby_url = f"https://www.mobygames.com/game/{moby_id}"
+    title = handle_normalized_text(active_game_data.get("title", ""))
+    platform = get_platform_name()
+
+    source_file = Path(f"{BASE_DIR}/Data/{platform}.xlsx")
+    try:
+        source_data = pd.read_excel(source_file, engine="openpyxl", dtype=str).fillna("")
+        source_data.columns = handle_normalized_cols(source_data.columns)
+        matching_row = source_data["title"].map(handle_normalized_text) == title
+        if not matching_row.any():
+            handle_error(f"No matching game found for title '{title}' in source data.")
+            return
+
+        source_data.loc[matching_row, key] = moby_url
+        source_data.to_excel(source_file, engine="openpyxl", index=False)
+        active_game_data[key] = moby_url
+        missing_fields.pop(key, None)
+        print(f"Debug: Added Moby ID {moby_id} for title '{title}' on platform '{platform}'")
+        #update_thumbnail()
+        update_info_frame()
+    except Exception as e:
+        handle_error(f"Error updating source data: {e}")
 
 def button_focus_accept():
     global acceptbutton
@@ -316,6 +362,7 @@ def game_search_focus():
 
 def game_decline():
     game_clear()
+    update_thumbnail()
     game_search_focus()
 
 def game_log(title, platform, release_date, format, condition, case_condition, contents, edition):
@@ -449,6 +496,72 @@ def get_game_data(query, platform=None):
     handle_error(f"{query} not found.")
     return None
 
+def get_game_source_data(query):
+    if active_settings is None:
+        return None
+
+    platform = get_platform_name()
+    if not platform:
+        return None
+
+    source_file = Path(f"Data/{platform}.xlsx")
+    if not source_file.exists():
+        handle_error(f"Source file for platform '{platform}' not found.")
+        return None
+
+    source_data = pd.read_excel(source_file, engine="openpyxl", dtype=str)
+
+    if source_data.empty:
+        handle_error(f"Source data for platform '{platform}' is empty.")
+        return None
+
+    source_data.columns = handle_normalized_cols(source_data.columns)
+    source_data = source_data.fillna("")
+
+    normalized_query = handle_normalized_text(query)
+    found_method = {}
+    matches = pd.DataFrame()  # Initialize an empty DataFrame for matches
+    
+    if is_upc(query):
+        matches = source_data[source_data["upc"] == normalized_query]
+
+    if not matches.empty:
+        found_method['upc'] = True
+
+    if matches.empty:
+        matches = source_data[source_data["title"].str.lower() == normalized_query]
+
+    if not matches.empty:
+        found_method['title'] = True
+
+    if matches.empty:
+        normalized_query = get_simplified_text(query)
+        matches = source_data[source_data["title"].map(get_simplified_text) == normalized_query]
+
+    if not matches.empty:
+        found_method['title_normalized'] = True
+
+    if matches.empty:
+        matches = source_data[source_data["title"].map(get_simplified_text).str.endswith(normalized_query)]
+
+    if not matches.empty:
+        found_method['title_endswith'] = True
+
+    if matches.empty:
+        return None
+
+    print(f"Found through method: {found_method}")
+    return matches.iloc[-1]
+
+def get_moby_id():
+    if active_game_data is None:
+        return None
+    moby_url = active_game_data.get("url")
+    if not moby_url:
+        return None
+
+    return moby_url.split("/")[-1] if moby_url else None
+
 def get_options_for_key(key):
     if active_settings is None:
         return []
@@ -498,7 +611,21 @@ def get_response(url, timeout=100, **kwargs):
     except requests.RequestException as e:
         handle_error(f"Error fetching URL: {url}\n{e}")
         return None
-    
+
+def get_simplified_text(text):
+    text = handle_normalized_text(text)
+    symbols = [":", "'", "-", ".", ","]
+    for symbol in symbols:
+        text = text.replace(symbol, "")
+    return text
+
+def get_soup(game_url):
+    response = get_response(game_url)
+    if response is None:
+        return None
+    soup = bs.BeautifulSoup(response.text, 'html.parser')
+    return soup
+
 def get_taxonomy_keys() -> list:
     if active_settings is None:
         return []
@@ -518,6 +645,27 @@ def get_taxonomy_default_idx(key: str) -> int:
     if key in platform_defaults:
         idx = int(platform_defaults[key])
     return idx
+
+def get_thumbnail_id(url):
+    if not url:
+        return None
+
+    # Split at the last / and take the last part as the id
+    return url.split('/')[-1]
+
+def get_thumbnail_path(url):
+    game_id = get_thumbnail_id(url)
+    platform = get_platform_name()
+    title = active_game_data.get("title", "").strip() if active_game_data else ""
+
+    if not game_id or not platform:
+        return None
+
+    image_dir = Path(f"{BASE_DIR}/Data/Images/{platform}")
+    image_path = image_dir / f"{game_id}.png"
+    if not image_path.is_file():
+        image_path = image_dir / f"{platform}_{title}.png"
+    return image_path if image_path.is_file() else None
 
 def handle_accept_key(root, event):
         if isinstance(root.focus_get(), (ttk.Entry, tk.Entry)):
@@ -570,6 +718,18 @@ def handle_missing_field(widget, key):
 
     return entry
 
+def handle_missing_moby_id_shortcut(event=None):
+    if infoframe is None:
+        return
+
+    moby_id_button = missing_fields.get("url")
+    if moby_id_button:
+        moby_id_button.focus_set()
+        moby_id_button.invoke()
+        return "break"
+
+    return None
+
 def handle_missing_upc_shortcut(event=None):
     if infoframe is None:
         return
@@ -581,6 +741,10 @@ def handle_missing_upc_shortcut(event=None):
         return "break"
     
     return None
+
+def handle_normalized_text(text):
+    # Normalize text to lowercase and stripped of whitespace
+    return str(text).strip().casefold()
 
 def handle_normalized_cols(cols):
     # Normalize column names to lowercase and stripped of whitespace
@@ -662,6 +826,10 @@ def handle_toggle_change(toggle):
     # Update the context choices if a toggle change affects them
     update_choices(changes=True)
     settings_save()
+
+def handle_url(event, url):
+    if url:
+        webbrowser.open_new_tab(url)
 
 def is_os():
     if active_settings is None:
@@ -1676,7 +1844,51 @@ def scrape_prices(game_url):
 
     return price if price else None
 
-def scrape_price_pricecharting(barcode):
+def scrape_pricecharting_img(soup):
+    if soup is None:
+        return None
+
+    img_soup = soup.find('div', class_='cover')
+    if img_soup is None:
+        return None
+
+    platform = get_platform_name()
+    filename = get_moby_id() or active_game_data.get('title', "unknown").replace(" ", "_").lower()
+    
+    img = img_soup.find('img')
+    img_path = Path(f"{BASE_DIR}/Data/Images/{platform}/{filename}.png")
+
+    if img_path.is_file():
+        print(f"Debug: Image already exists at {img_path}.")
+        return img_path
+
+    img_url = img['src'] if img else None
+    if img_url is None:
+        print("Debug: No image URL found.")
+        return None
+
+    try:
+        response = requests.get(img_url, timeout=30)
+        response.raise_for_status()
+
+        img_path.parent.mkdir(parents=True, exist_ok=True)
+
+        with Image.open(BytesIO(response.content)) as image:
+            image.convert("RGBA").save(img_path, "PNG")
+
+        print(f"Debug: Saved PriceCharting image to {img_path}")
+        return img_path
+
+    except (requests.RequestException, OSError) as exc:
+        print(f"Debug: Failed to save PriceCharting image: {exc}")
+        return None
+
+def scrape_pricecharting_price(barcode):
+    skip = False
+    if skip:
+        print("Debug: Skipping PriceCharting scrape due to skip flag.")
+        return None, None
+
     if active_settings is None:
         return None, None
     
@@ -1717,6 +1929,11 @@ def scrape_price_pricecharting(barcode):
     price_type = 'New Price' if sealed else 'Loose' if loose else 'CIB Price'
     # Get the corresponding Used Price or New Price column depending on the condition
     price_header_text = price_soup.find('span', string=price_type)
+
+    # Get the sometime alternate header text if the expected one isn't found
+    if price_header_text is None:
+        price_type = 'High Price' if sealed else 'Low Price' if loose else 'Mid Price'
+        price_header_text = price_soup.find('span', string=price_type)
     print(f"Debug: Price Header Text: {price_header_text}")
     price_header = price_header_text.find_parent('th') if price_header_text else None
 
@@ -1806,12 +2023,10 @@ def scrape_for_dt_mul(soup, text):
 
     return a_elements
 
-def scrape_upc(game_url):
-    print(f"Debug: Scraping UPC from {game_url}")
-    response = get_response(game_url)
-    if response is None:
+def scrape_upc(soup):
+    print(f"Debug: Scraping UPC")
+    if soup is None:
         return None
-    soup = bs.BeautifulSoup(response.text, 'html.parser')
 
     upc_soup = soup.find('table', id='attribute')
 
@@ -1842,7 +2057,7 @@ def search_game(query):
     if active_settings is None:
         return None
 
-    match = get_game_data(query)
+    match = get_game_source_data(query)
     if match is None:
         handle_error(f"No matching game found for query '{query}'")
         return None
@@ -1851,6 +2066,7 @@ def search_game(query):
     active_game_data['developer'] = match.get('developer', "")
     active_game_data['release_date'] = match.get('release_date', "")
     active_game_data['publisher'] = match.get('publisher', "")
+    active_game_data['url'] = match.get('url', "")
 
     for taxonomy_key in get_taxonomy_keys():
         active_taxonomy[taxonomy_key] = match.get(taxonomy_key, "")
@@ -1868,13 +2084,15 @@ def search_game(query):
         print(f"Debug: Context '{context_singular}': {active_contexts[context]}")
 
     #active_physical_data['price'] = scrape_prices(url)
-    active_contexts['price'], item_link = scrape_price_pricecharting(query)
+    active_contexts['price'], item_link = scrape_pricecharting_price(query)
     if is_upc(query):
         active_contexts['upc'] = query
         print(f"Debug: Using UPC from search query: {active_contexts['upc']}")
     elif item_link:
-        upc = scrape_upc(item_link)
+        pc_soup = get_soup(item_link)
+        upc = scrape_upc(pc_soup)
         active_contexts['upc'] = upc or ''
+        cover_img_path = scrape_pricecharting_img(pc_soup)
     else:
         active_contexts.setdefault('upc', '')
         print("Debug: No UPC found from search query or item page.")
@@ -1915,7 +2133,7 @@ def selections_update(name, value):
         price = None
         if should_refetch:
             print(f"Debug: Refetching prices due to change in condition/content. Old Condition: {old_condition}, New Condition: {new_condition}, Old Content: {old_content}, New Content: {new_content}")
-            price, _ = scrape_price_pricecharting(active_contexts.get("upc") or active_game_data.get("title", [None])[0])
+            price, _ = scrape_pricecharting_price(active_contexts.get("upc") or active_game_data.get("title", [None])[0])
 
         if price is not None:
             active_contexts["price"] = price
@@ -2034,7 +2252,7 @@ def update_button_states(state):
     # Find the search frame in the frames_padded list and update the state of the buttons
     search_frame = None
     for frame in frames_padded:
-        if frame.cget("text") == "Search":
+        if isinstance(frame, ttk.LabelFrame) and frame.cget("text") == "Search":
             search_frame = frame
             break
     if search_frame is not None:
@@ -2125,15 +2343,13 @@ def update_info_frame():
     
     clear_infoframe()
     missing_fields.clear()
+    update_thumbnail()
     
     active_game_items = list(active_game_data.items())
     active_taxonomy_items = list(active_taxonomy.items())
     active_physical_items = list(active_contexts.items())
 
     max_rows = max(len(active_game_items), len(active_taxonomy_items), len(active_physical_items))
-
-    current_title = active_title.get() if isinstance(active_title, tk.StringVar) else None
-    current_perspective = active_perspective.get() if isinstance(active_perspective, tk.StringVar) else None
 
     active_game_data_offset = 0
     active_taxonomy_offset = 0
@@ -2146,7 +2362,21 @@ def update_info_frame():
         data_label = ttk.Label(infoframe, text=handle_ellipsis(handle_single_option(f"{key.capitalize()}{suffix}")), style=f"InfoData{'Even' if row % 2 == 0 else 'Odd'}.TLabel")
         data_label.grid(row=row, column=0, sticky="nsew")
 
-        if key and not value:
+        if key.casefold() == "url" and value == "" and active_game_data.get("title", "") != "":
+            url_frame = ttk.Frame(infoframe)
+            url_frame.grid(row=row, column=1, sticky="nsew", padx=0, pady=0)
+            url_frame.columnconfigure(0, weight=1)
+            url_frame.columnconfigure(1, weight=0)
+            fallback_url = "https://www.mobygames.com/search/?q=" + str(get_simplified_text(active_game_data.get("title", "")).replace(" ", "%20"))
+            value_label = tk.Label(url_frame, text=handle_ellipsis("Search MobyGames"), fg="#0563C1", cursor="hand2", anchor="w", background=(active_settings["theming"]["custom_colors"]["row_even_bg"] if row % 2 == 0 else active_settings["theming"]["custom_colors"]["row_odd_bg"]),)
+            value_label.bind("<Button-1>", lambda event, url=fallback_url: handle_url(event, url),)
+            value_label.grid(row=0, column=0, sticky="nsew", padx=(0, 4), pady=0)
+            Tooltip(value_label, text=fallback_url)
+            add_id_btn = ttk.Button(url_frame, text="Add ID", command=lambda k=key: add_moby_id(k))
+            add_id_btn.grid(row=0, column=1, sticky="nsew")
+            add_id_btn.configure(padding=(0, 0))
+            missing_fields[key] = add_id_btn
+        elif key and not value:
             var = tk.StringVar(value="")
             entry = ttk.Entry(infoframe, textvariable=var)
             entry.grid(row=row, column=1, sticky="nsew")
@@ -2163,8 +2393,14 @@ def update_info_frame():
             entry.bind("<Return>", _on_submit_game)
             entry.bind("<FocusOut>", _on_submit_game)
             entry.bind("<Escape>", lambda e: update_info_frame())
+        elif key.casefold() == "url" and value:
+            #value_label = tk.Label(infoframe, text=handle_ellipsis(f"See on MobyGames ({value.split('/')[-1]})"), fg="#0563C1", cursor="hand2", anchor="w", background=(active_settings["theming"]["custom_colors"]["row_even_bg"] if row % 2 == 0 else active_settings["theming"]["custom_colors"]["row_odd_bg"]),)
+            value_label = tk.Label(infoframe, text=handle_ellipsis(f"{value}"), fg="#0563C1", cursor="hand2", anchor="w", background=(active_settings["theming"]["custom_colors"]["row_even_bg"] if row % 2 == 0 else active_settings["theming"]["custom_colors"]["row_odd_bg"]),)
+            value_label.bind("<Button-1>", lambda event, url=str(value): handle_url(event, url),)
+            value_label.grid(row=row, column=1, sticky="nsew")
+            Tooltip(value_label, text=str(value))
         else:
-            value_label = ttk.Label(infoframe, text=handle_ellipsis(handle_single_option(value)), style=f"InfoData{'Even' if row % 2 == 0 else 'Odd'}.TLabel")
+            value_label = ttk.Label(infoframe, text=handle_ellipsis(str(value)), style=f"InfoData{'Even' if row % 2 == 0 else 'Odd'}.TLabel")
             value_label.grid(row=row, column=1, sticky="nsew")
 
     # Update the info frame with the current taxonomy data
@@ -2244,6 +2480,36 @@ def update_info_frame():
         infoframe.rowconfigure(row, weight=1, minsize=20)
 
     infoframe.update_idletasks()
+
+def update_thumbnail():
+    global thumbnail_label, thumbnail_image, thumbnail_tooltip
+
+    if thumbnail_label is None:
+        return
+
+    thumbnail_size = (180, 240)
+
+    # Always create a transparent canvas so the thumbnail area keeps its size.
+    canvas = Image.new("RGBA", thumbnail_size, (0, 0, 0, 0))
+
+    url = active_game_data.get("url", "")
+    image_path = get_thumbnail_path(url)
+
+    if image_path is not None:
+        cover = Image.open(image_path).convert("RGBA")
+        cover.thumbnail(thumbnail_size, Image.Resampling.LANCZOS)
+
+        x_offset = (thumbnail_size[0] - cover.width) // 2
+        y_offset = (thumbnail_size[1] - cover.height) // 2
+        canvas.alpha_composite(cover, (x_offset, y_offset))
+
+        if thumbnail_tooltip is not None:
+            thumbnail_tooltip.text = f"{image_path.name}"
+    elif thumbnail_tooltip is not None:
+        thumbnail_tooltip = Tooltip(thumbnail_label, text="Game cover will appear here if available.")
+
+    thumbnail_image = ImageTk.PhotoImage(canvas)
+    thumbnail_label.configure(image=thumbnail_image)
 
 def write_new_headers(data, existing_data: pd.DataFrame):
     desired_order_cols = []
@@ -2330,7 +2596,8 @@ def write_to_file(data, platform):
         pyperclip.copy(new_reindexed.to_csv(sep='\t', index=False, header=False))
 
 def main():
-    global infoframe, searchentry, logframe, logtree, acceptbutton, declinebutton, contextlist, app_root
+    global infoframe, searchentry, logframe, logtree, acceptbutton, declinebutton, contextlist
+    global app_root, thumbnail_label, thumbnail_image, thumbnail_tooltip
     if active_settings is None:
         handle_error("No settings available.")
         return
@@ -2369,8 +2636,23 @@ def main():
     frames.append(databaseframe)
     contextrow += 1
 
-    infoframe = ttk.LabelFrame(mainframe, text="Info", padding="2", relief=tk.SUNKEN)
-    infoframe.grid(row=mainrow, column=0, sticky="nsew")
+    info_container = ttk.Frame(mainframe)
+    info_container.grid(row=mainrow, column=0, sticky="nsew")
+    info_container.columnconfigure(1, weight=1)
+    info_container.rowconfigure(0, weight=1)
+    frames_padded.append(info_container)
+
+    thumbnail_frame = ttk.LabelFrame(info_container, text="Cover", padding="2", relief=tk.RIDGE)
+    thumbnail_frame.grid(row=0, column=0, sticky="nsew")
+    thumbnail_frame.columnconfigure(0, weight=1)
+    thumbnail_frame.rowconfigure(0, weight=1)
+
+    thumbnail_label = tk.Label(thumbnail_frame, text="")
+    thumbnail_label.grid(row=0, column=0, sticky="nsew")
+    thumbnail_tooltip = Tooltip(thumbnail_label, text="Game cover will appear here if available.")
+
+    infoframe = ttk.LabelFrame(info_container, text="Info", padding="2", relief=tk.SUNKEN)
+    infoframe.grid(row=0, column=1, sticky="nsew")
     frames_padded.append(infoframe)
     mainrow += 1
 
@@ -2546,6 +2828,7 @@ def main():
     root.bind_all('<Delete>', lambda event: handle_decline_key(root, event))
     root.bind_all('<Control-q>', lambda event: root.quit())
     root.bind_all('<Insert>', handle_missing_upc_shortcut)
+    root.bind_all('<Page_Up>', handle_missing_moby_id_shortcut)
     root.bind('<Tab>', lambda event: handle_tab_key(root, event, 1))
     root.bind('<Shift-Tab>', lambda event: handle_tab_key(root, event, -1))
     root.bind('<ISO_Left_Tab>', lambda event: handle_tab_key(root, event, -1))
