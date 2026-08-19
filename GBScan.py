@@ -21,12 +21,15 @@ import sys
 BASE_DIR = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else os.path.dirname(__file__)
 
 active_game_data = {}
+active_game_is_new = False
 active_perspective = None
 active_contexts = {}
 active_settings = None
 active_selections = {}
 active_specs = {}
 active_taxonomy = {}
+active_source_taxonomy = {}
+active_source_game_data = {}
 active_title = None
 app_root = None
 frames = []
@@ -45,7 +48,7 @@ thumbnail_label = None
 thumbnail_image = None
 thumbnail_tooltip = None
 
-def add_moby_id(key):
+def add_id(key):
     print(f"Debug: Adding Moby ID")
     global active_game_data
     if not active_game_data:
@@ -62,27 +65,104 @@ def add_moby_id(key):
         return
 
     moby_url = f"https://www.mobygames.com/game/{moby_id}"
-    title = handle_normalized_text(active_game_data.get("title", ""))
-    platform = get_platform_name()
-
-    source_file = Path(f"{BASE_DIR}/Data/{platform}.xlsx")
-    try:
-        source_data = pd.read_excel(source_file, engine="openpyxl", dtype=str).fillna("")
-        source_data.columns = handle_normalized_cols(source_data.columns)
-        matching_row = source_data["title"].map(handle_normalized_text) == title
-        if not matching_row.any():
-            handle_error(f"No matching game found for title '{title}' in source data.")
-            return
-
-        source_data.loc[matching_row, key] = moby_url
-        source_data.to_excel(source_file, engine="openpyxl", index=False)
+    if active_game_is_new:
         active_game_data[key] = moby_url
         missing_fields.pop(key, None)
-        print(f"Debug: Added Moby ID {moby_id} for title '{title}' on platform '{platform}'")
-        #update_thumbnail()
         update_info_frame()
-    except Exception as e:
-        handle_error(f"Error updating source data: {e}")
+        return
+
+    active_game_data[key] = moby_url
+    if update_source_record():
+        missing_fields.pop(key, None)
+        update_info_frame()
+
+def add_upc():
+    if not active_contexts:
+        return
+
+    new_upc = simpledialog.askstring("Add UPC", "Enter a 12- or 13-digit UPC:")
+    if new_upc is None:
+        return
+
+    new_upc = new_upc.strip()
+    if not is_upc(new_upc):
+        handle_error("UPC must contain exactly 12 or 13 digits.")
+        return
+
+    existing_upcs = [value.strip() for value in str(active_contexts.get("upc", "")).split(",") if value.strip()]
+
+    if new_upc not in existing_upcs:
+        existing_upcs.append(new_upc)
+
+    updated_upc = ", ".join(existing_upcs)
+    previous_upc = active_contexts.get("upc", "")
+    active_contexts["upc"] = updated_upc
+
+    # If the game is new, we don't need to update the source record until the game is accepted
+    if not active_game_is_new and not update_source_record():
+        active_contexts["upc"] = previous_upc
+        return
+    update_info_frame()
+
+def append_new_source_record():
+    platform = get_platform_name()
+    source_file = Path(BASE_DIR) / "Data" / f"{platform}.xlsx"
+    diff_dir = Path(BASE_DIR) / "Data" / "Diff"
+    diff_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = get_timestamp()
+
+    record = {
+        "title": active_game_data.get("title", ""),
+        "release_date": active_game_data.get("release_date", ""),
+        "publisher": active_game_data.get("publisher", ""),
+        "developer": active_game_data.get("developer", ""),
+        "added": timestamp,
+        "modified": "",
+        "url": active_game_data.get("url", ""),
+        "platform": get_platform_name()
+    }
+
+    for key in get_taxonomy_keys():
+        record[key] = active_taxonomy.get(key, "")
+
+    for key in get_all_contexts():
+        source_key = key[:-1] if key.endswith("s") else key
+        record[source_key] = active_contexts.get(key, "")
+
+    record["upc"] = active_contexts.get("upc", "")
+
+    source_data = pd.read_excel(source_file, engine="openpyxl", dtype=str).fillna("")
+    source_data.columns = handle_normalized_cols(source_data.columns)
+
+    normalized_record = {str(key).lower().replace(" ", "_"): value for key, value in record.items()}
+    new_row = {column: normalized_record.get(column, "") for column in source_data.columns}
+
+    source_data = pd.concat([source_data, pd.DataFrame([new_row])], ignore_index=True)
+    source_data.to_excel(source_file, engine="openpyxl", index=False)
+
+    # Create a file in the Diff directory to track new titles
+    diff_file = diff_dir / f"{platform}_new.json"
+    new_records = []
+
+    if diff_file.exists():
+        with diff_file.open("r", encoding="utf-8") as source:
+            loaded_records = json.load(source)
+            if isinstance(loaded_records, list):
+                new_records = loaded_records
+
+    normalized_title = handle_normalized_text(record["title"])
+
+    already_added = any(handle_normalized_text(item.get("title", "")) == normalized_title for item in new_records)
+
+    if not already_added:
+        new_records.append(normalized_record)
+
+    with diff_file.open("w", encoding="utf-8") as destination:
+        json.dump(new_records, destination, indent=4, ensure_ascii=True)
+
+def apply_taxonomy_style(key, menu):
+    style_name = ("ModifiedTaxonomy.TMenubutton" if is_source_taxonomy_changed(key) else "Taxonomy.TMenubutton")
+    menu.configure(style=style_name)
 
 def button_focus_accept():
     global acceptbutton
@@ -272,7 +352,7 @@ def game_accept():
         if context == "contents":
             continue  # Skip contents since it's already handled
         context_singular = context[:-1] if context.endswith('s') else context
-        contexts[str(context_singular).capitalize()] = get_context_data(context)
+        contexts[str(context_singular).replace("_", " ").title()] = get_context_data(context)
 
     taxonomies = {}
     for taxonomy in get_taxonomy_keys():
@@ -317,8 +397,11 @@ def game_accept():
         **taxonomies,
         "Genre": active_taxonomy.get('genre') if active_taxonomy.get('genre') else "",
         "Moby Score": active_taxonomy.get('moby_score') if active_taxonomy.get('moby_score') else "",
-        "Added": [pd.Timestamp.now().strftime("%Y-%m-%d")],
-        "UPC": [active_contexts.get('upc')] if active_contexts.get('upc') else ""
+        "Added": [get_timestamp()],
+        "Modified": [get_timestamp() if not active_game_is_new else ""],
+        "UPC": [active_contexts.get('upc')] if active_contexts.get('upc') else "",
+        "URL": [active_game_data.get('url')] if active_game_data.get('url') else "",
+        "Price URL": [active_game_data.get('price_url')] if active_game_data.get('price_url') else ""
     }
     
     # Re-order the columns based on the order in the settings
@@ -328,6 +411,23 @@ def game_accept():
             if str(data_key).lower() == str(key).lower():
                 ordered_data[data_key] = data[data_key]
                 break
+
+    # If the title is neew/unknown
+    if active_game_is_new:
+        response = messagebox.askyesno("Add to source database", (f"Do you wish to add '{selected_title}' ({selected_platform}) to the source database?"))
+        if response:
+            try:
+                append_new_source_record()
+            except Exception as exc:
+                handle_error(f"Unable to add '{selected_title}' to the source database:\n{exc}")
+                return
+
+    # If there's changes to the taxonomy 
+    elif is_source_taxonomy_changed():
+        response = messagebox.askyesno("Update title", f"Do you wish to update the info for '{selected_title}' in the source database?")
+        if response and not update_source_record():
+            handle_error(f"Unable to update '{selected_title}' in the source database.")
+            return
 
     df = pd.DataFrame(ordered_data)
 
@@ -339,12 +439,14 @@ def game_accept():
 
 def game_clear():
     # Clear the active game data and reset the active title and perspective
-    global active_game_data, active_taxonomy, active_contexts, active_title, active_perspective
+    global active_game_data, active_taxonomy, active_contexts, active_title, active_perspective, active_game_is_new, active_source_taxonomy
     active_game_data = {}
     active_taxonomy = {}
+    active_source_taxonomy = {}
     active_contexts = {}
     active_title = None
     active_perspective = None
+    active_game_is_new = False
 
     clear_infoframe()
 
@@ -361,6 +463,15 @@ def game_search_focus():
     searchentry.focus_set()
 
 def game_decline():
+    if not active_game_is_new and is_source_taxonomy_changed():
+        response = messagebox.askyesno("Update source database", "Do you wish to update the source database before discarding this game?")
+
+        if response:
+            title = active_game_data.get("title", "")
+            if not update_source_record():
+                handle_error(f"Unable to update '{title}' in the source database.")
+                return
+
     game_clear()
     update_thumbnail()
     game_search_focus()
@@ -523,7 +634,7 @@ def get_game_source_data(query):
     matches = pd.DataFrame()  # Initialize an empty DataFrame for matches
     
     if is_upc(query):
-        matches = source_data[source_data["upc"] == normalized_query]
+        matches = source_data[source_data["upc"].apply(lambda value: normalized_query in [handle_normalized_text(upc) for upc in str(value).split(",")])]
 
     if not matches.empty:
         found_method['upc'] = True
@@ -553,14 +664,16 @@ def get_game_source_data(query):
     print(f"Found through method: {found_method}")
     return matches.iloc[-1]
 
-def get_moby_id():
-    if active_game_data is None:
-        return None
-    moby_url = active_game_data.get("url")
-    if not moby_url:
+def get_moby_id(url=None):
+    if url is None:
+        if not active_game_data:
+            return None
+        url = active_game_data.get("url", "")
+
+    if not url:
         return None
 
-    return moby_url.split("/")[-1] if moby_url else None
+    return str(url).rstrip("/").split("/")[-1]
 
 def get_options_for_key(key):
     if active_settings is None:
@@ -614,17 +727,26 @@ def get_response(url, timeout=100, **kwargs):
 
 def get_simplified_text(text):
     text = handle_normalized_text(text)
-    symbols = [":", "'", "-", ".", ","]
+    symbols = [":", "'", "-", ".", ",", "(", ")", "[", "]"]
     for symbol in symbols:
         text = text.replace(symbol, "")
+    # Get rid of extra spaces between words
+    text = " ".join(text.split())
     return text
 
-def get_soup(game_url):
-    response = get_response(game_url)
+def get_soup(url):
+    response = get_response(url)
     if response is None:
         return None
     soup = bs.BeautifulSoup(response.text, 'html.parser')
-    return soup
+    return soup if soup is not None else None
+
+def get_specific_soup(url, tag, class_name):
+    soup = get_soup(url)
+    if soup is None:
+        return None
+    element = soup.find(tag, class_=class_name)
+    return element if element is not None else None
 
 def get_taxonomy_keys() -> list:
     if active_settings is None:
@@ -646,26 +768,21 @@ def get_taxonomy_default_idx(key: str) -> int:
         idx = int(platform_defaults[key])
     return idx
 
-def get_thumbnail_id(url):
-    if not url:
-        return None
-
-    # Split at the last / and take the last part as the id
-    return url.split('/')[-1]
-
 def get_thumbnail_path(url):
-    game_id = get_thumbnail_id(url)
+    game_id = get_moby_id(url)
     platform = get_platform_name()
-    title = active_game_data.get("title", "").strip() if active_game_data else ""
+    title = get_simplified_text(active_game_data.get("title", "")) if active_game_data else ""
 
-    if not game_id or not platform:
+    if not platform:
         return None
 
     image_dir = Path(f"{BASE_DIR}/Data/Images/{platform}")
-    image_path = image_dir / f"{game_id}.png"
-    if not image_path.is_file():
-        image_path = image_dir / f"{platform}_{title}.png"
+    image_path = Path(image_dir / f"{game_id}.png") if game_id else Path(image_dir / f"{title.replace(' ', '_')}.png")
+
     return image_path if image_path.is_file() else None
+
+def get_timestamp():
+    return pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
 
 def handle_accept_key(root, event):
         if isinstance(root.focus_get(), (ttk.Entry, tk.Entry)):
@@ -722,10 +839,10 @@ def handle_missing_moby_id_shortcut(event=None):
     if infoframe is None:
         return
 
-    moby_id_button = missing_fields.get("url")
-    if moby_id_button:
-        moby_id_button.focus_set()
-        moby_id_button.invoke()
+    id_button = missing_fields.get("url")
+    if id_button:
+        id_button.focus_set()
+        id_button.invoke()
         return "break"
 
     return None
@@ -735,9 +852,14 @@ def handle_missing_upc_shortcut(event=None):
         return
     
     # Find the row with the UPC entry
-    upc_widget = missing_fields.get('upc')
-    if upc_widget:
-        upc_widget.focus_set()
+    upc_button = missing_fields.get('upc')
+    if upc_button:
+        upc_button.focus_set()
+        upc_button.invoke()
+        return "break"
+
+    if "upc" in active_contexts:
+        add_upc()
         return "break"
     
     return None
@@ -835,6 +957,22 @@ def is_os():
     if active_settings is None:
         return False
     return get_platform_key() in active_settings.get("OS", {})
+
+def is_source_game_data_changed(key = None):
+    if active_game_is_new or not active_source_game_data:
+        return False
+
+    if key is not None:
+        return str(active_game_data.get(key, "")) != str(active_source_game_data.get(key, ""))
+    return any(str(active_game_data.get(k, "")) != str(active_source_game_data.get(k, "")) for k in active_game_data.keys())
+
+def is_source_taxonomy_changed(key = None):
+    if active_game_is_new or not active_source_taxonomy:
+        return False
+
+    if key is not None:
+        return str(active_taxonomy.get(key, "")) != str(active_source_taxonomy.get(key, ""))
+    return any(str(active_taxonomy.get(k, "")) != str(active_source_taxonomy.get(k, "")) for k in get_taxonomy_keys())
 
 def is_toggled(toggle):
     if active_settings is None:
@@ -1853,7 +1991,7 @@ def scrape_pricecharting_img(soup):
         return None
 
     platform = get_platform_name()
-    filename = get_moby_id() or active_game_data.get('title', "unknown").replace(" ", "_").lower()
+    filename = get_moby_id() or get_simplified_text(active_game_data.get('title', "unknown")).replace(" ", "_")
     
     img = img_soup.find('img')
     img_path = Path(f"{BASE_DIR}/Data/Images/{platform}/{filename}.png")
@@ -1883,23 +2021,29 @@ def scrape_pricecharting_img(soup):
         print(f"Debug: Failed to save PriceCharting image: {exc}")
         return None
 
-def scrape_pricecharting_price(barcode):
+def scrape_pricecharting_price(query):
     skip = False
     if skip:
         print("Debug: Skipping PriceCharting scrape due to skip flag.")
         return None, None
 
+    title = get_simplified_text(active_game_data.get('title')) if active_game_data else None
+    edition = str(get_edition() or "").casefold()
+
     if active_settings is None:
         return None, None
-    
-    search_url = f"https://www.pricecharting.com/search-products?type=prices&q={barcode}"
-    response = get_response(search_url)
-    if response is None:
-        return None, None
-    soup = bs.BeautifulSoup(response.text, 'html.parser')
 
-    price_soup = soup.find('table', class_='js-addable hoverable-rows sortable')
+    price_soup = None
 
+    if is_upc(query):
+        search_url = f"https://www.pricecharting.com/search-products?type=prices&q={query}"
+        price_soup = get_specific_soup(search_url, "table", "js-addable hoverable-rows sortable")
+
+    if price_soup is None:
+        search_url = f"https://www.pricecharting.com/search-products?type=prices&q={title}"
+        price_soup = get_specific_soup(search_url, "table", "js-addable hoverable-rows sortable")
+
+    print(f"Debug: Search URL: {search_url}")
     if price_soup is None:
         print("Debug: No prices table found.")
         return None, None
@@ -1912,10 +2056,37 @@ def scrape_pricecharting_price(barcode):
     # Find the row that contains the platform name
     use_pal = is_toggled("use_pal")
     text_to_find = "pal " + platform_name.lower() if use_pal else platform_name.lower()
-    platform_text = price_soup.find_all('a', string=lambda text: text and (text_to_find in text.lower()))
-    platform_row = platform_text[0].find_parent('tr') if platform_text else None
-    if not platform_row:
-        print(f"Debug: No prices found for platform {platform_name}.")
+
+    # Get all rows that contain the platform name, avoiding duplicates
+    platform_rows = []
+    for platform_link in price_soup.find_all("a", string=lambda text: (text and text_to_find in text.casefold())):
+        row = platform_link.find_parent("tr")
+        if row is not None and row not in platform_rows:
+            platform_rows.append(row)
+
+    # Among platform rows, find the one with the matching title
+    platform_row = None
+    modified_title = title
+
+    # Adjust title for platinum edition if applicable
+    if "platinum" in edition:
+        modified_title = f"{title} platinum"
+        print(f"Debug: Adjusted title for platinum edition: {modified_title}")
+
+    for row in platform_rows:
+        title_cell = row.find("td", class_="title")
+        title_link = title_cell.find("a") if title_cell else None
+        row_title = title_link.get_text(" ", strip=True) if title_link else ""
+
+        if get_simplified_text(row_title) == title:
+            platform_row = row
+            break
+        elif get_simplified_text(row_title) == modified_title:
+            platform_row = row
+            break
+
+    if platform_row is None:
+        print(f"Debug: No price info found for '{title}' ({platform_name}).")
         return None, None
 
     # Get the link to item that matches the platform
@@ -1927,6 +2098,7 @@ def scrape_pricecharting_price(barcode):
     contents = get_contents()
     loose = contents and 'loose' in contents.lower()
     price_type = 'New Price' if sealed else 'Loose' if loose else 'CIB Price'
+
     # Get the corresponding Used Price or New Price column depending on the condition
     price_header_text = price_soup.find('span', string=price_type)
 
@@ -1934,8 +2106,11 @@ def scrape_pricecharting_price(barcode):
     if price_header_text is None:
         price_type = 'High Price' if sealed else 'Low Price' if loose else 'Mid Price'
         price_header_text = price_soup.find('span', string=price_type)
+
     print(f"Debug: Price Header Text: {price_header_text}")
     price_header = price_header_text.find_parent('th') if price_header_text else None
+
+    print(f"Debug: Price Header: {price_header}")
 
     if price_header is None:
         header_tr = price_soup.find('thead').find('tr') if price_soup.find('thead') else None
@@ -2049,27 +2224,60 @@ def scrape_upc(soup):
     return upc   
 
 def search_game(query):
-    global active_game_data, active_taxonomy, active_contexts, active_title, active_perspective
+    global active_game_data, active_taxonomy, active_contexts, active_title, active_perspective, active_game_is_new, active_source_taxonomy
     active_game_data = {}
     active_taxonomy = {}
     active_contexts = {}
+    active_source_taxonomy = {}
+    active_game_is_new = False
     
     if active_settings is None:
         return None
 
     match = get_game_source_data(query)
+
     if match is None:
         handle_error(f"No matching game found for query '{query}'")
-        return None
+        active_game_is_new = True
 
-    active_game_data['title'] = match.get('title', "")
-    active_game_data['developer'] = match.get('developer', "")
-    active_game_data['release_date'] = match.get('release_date', "")
-    active_game_data['publisher'] = match.get('publisher', "")
-    active_game_data['url'] = match.get('url', "")
+        active_game_data = {key: "" for key in active_settings.get("scraped_data", {})}
+        active_taxonomy = {key: "" for key in active_settings.get("taxonomy", {})}
+        active_contexts = {key: get_context_data(key) for key in get_all_contexts()}
+        active_source_taxonomy = {}
+        active_source_game_data = {}
+
+        active_game_data["title"] = str(query).strip() if not is_upc(query) else ""
+        active_game_data["publisher"] = ""
+        active_game_data["developer"] = ""
+        active_game_data["release_date"] = ""
+        active_game_data["url"] = ""
+
+        active_contexts["upc"] = query if is_upc(query) else ""
+        active_contexts["payed"] = ""
+        active_contexts["price"] = ""
+
+        def finish_unknown():
+            update_button_states("normal")
+            update_info_frame()
+            button_focus_accept()
+
+        if app_root is not None:
+            app_root.after(100, finish_unknown)
+
+        return
+
+    active_game_data["title"] = match.get("title", "")
+    active_game_data["developer"] = match.get("developer", "")
+    active_game_data["release_date"] = match.get("release_date", "")
+    active_game_data["publisher"] = match.get("publisher", "")
+    active_game_data["url"] = match.get("url", "")
 
     for taxonomy_key in get_taxonomy_keys():
-        active_taxonomy[taxonomy_key] = match.get(taxonomy_key, "")
+        value = match.get(taxonomy_key, "")
+        active_taxonomy[taxonomy_key] = value
+        active_source_taxonomy[taxonomy_key] = value
+
+    active_source_game_data = {key: match.get(key, "") for key in active_game_data.keys()}
 
     # Get the context data from the match or use the default values if not found
     for context in get_all_contexts():
@@ -2084,19 +2292,19 @@ def search_game(query):
         print(f"Debug: Context '{context_singular}': {active_contexts[context]}")
 
     #active_physical_data['price'] = scrape_prices(url)
-    active_contexts['price'], item_link = scrape_pricecharting_price(query)
-    if is_upc(query):
-        active_contexts['upc'] = query
-        print(f"Debug: Using UPC from search query: {active_contexts['upc']}")
-    elif item_link:
+    active_contexts["upc"] = match.get("upc", "")
+    active_contexts["price"], item_link = scrape_pricecharting_price(query)
+    active_game_data["price_url"] = item_link or ''
+    if item_link:
+        print(f"Debug: Got link scraping {item_link}")
         pc_soup = get_soup(item_link)
-        upc = scrape_upc(pc_soup)
-        active_contexts['upc'] = upc or ''
+        upc = scrape_upc(pc_soup) if not is_upc(query) else ""
+        active_contexts["upc"] = upc if upc else active_contexts.get("upc", "")
         cover_img_path = scrape_pricecharting_img(pc_soup)
     else:
         active_contexts.setdefault('upc', '')
         print("Debug: No UPC found from search query or item page.")
-    active_contexts['payed'] = ""
+    active_contexts["payed"] = ""
     
     def finish():
         update_button_states("normal")
@@ -2115,8 +2323,8 @@ def selections_update(name, value):
     if active_settings is None:
         return
     
-    old_condition = active_contexts.get("condition", "").lower()
-    old_content = active_contexts.get("content", "").lower()
+    old_condition = str(active_contexts.get("condition") or "").casefold()
+    old_content = str(active_contexts.get("content") or "").casefold()
 
     for setting in active_contexts.keys():
         setting_plural = (setting + "s") if not setting.endswith("s") else setting
@@ -2127,8 +2335,8 @@ def selections_update(name, value):
 
     # Refetch the price if the condition or content has changed in a way that affects the price
     if name in ("conditions", "contents"):
-        new_condition = (active_contexts.get("condition") or "").lower()
-        new_content = (active_contexts.get("content") or "").lower()
+        new_condition = str(active_contexts.get("condition") or "").casefold()
+        new_content = str(active_contexts.get("content") or "").casefold()
         should_refetch = (name == "conditions" and (("sealed" in new_condition and "sealed" not in old_condition) or ("sealed" in old_condition and "sealed" not in new_condition))) or (name == "contents" and (("loose" in new_content and "loose" not in old_content) or ("loose" in old_content and "loose" not in new_content)))
         price = None
         if should_refetch:
@@ -2372,7 +2580,7 @@ def update_info_frame():
             value_label.bind("<Button-1>", lambda event, url=fallback_url: handle_url(event, url),)
             value_label.grid(row=0, column=0, sticky="nsew", padx=(0, 4), pady=0)
             Tooltip(value_label, text=fallback_url)
-            add_id_btn = ttk.Button(url_frame, text="Add ID", command=lambda k=key: add_moby_id(k))
+            add_id_btn = ttk.Button(url_frame, text="Add ID", command=lambda k=key: add_id(k))
             add_id_btn.grid(row=0, column=1, sticky="nsew")
             add_id_btn.configure(padding=(0, 0))
             missing_fields[key] = add_id_btn
@@ -2393,7 +2601,7 @@ def update_info_frame():
             entry.bind("<Return>", _on_submit_game)
             entry.bind("<FocusOut>", _on_submit_game)
             entry.bind("<Escape>", lambda e: update_info_frame())
-        elif key.casefold() == "url" and value:
+        elif key.casefold() == "url" and value or key.casefold() == "price_url" and value:
             #value_label = tk.Label(infoframe, text=handle_ellipsis(f"See on MobyGames ({value.split('/')[-1]})"), fg="#0563C1", cursor="hand2", anchor="w", background=(active_settings["theming"]["custom_colors"]["row_even_bg"] if row % 2 == 0 else active_settings["theming"]["custom_colors"]["row_odd_bg"]),)
             value_label = tk.Label(infoframe, text=handle_ellipsis(f"{value}"), fg="#0563C1", cursor="hand2", anchor="w", background=(active_settings["theming"]["custom_colors"]["row_even_bg"] if row % 2 == 0 else active_settings["theming"]["custom_colors"]["row_odd_bg"]),)
             value_label.bind("<Button-1>", lambda event, url=str(value): handle_url(event, url),)
@@ -2422,13 +2630,22 @@ def update_info_frame():
 
             var = tk.StringVar(value=initial)
             update_info_choice(key, initial)  # Ensure the initial value is set in active_taxonomy
+
+            taxonomy_modified = is_source_taxonomy_changed(key)
+            style_name = ("ModifiedTaxonomy.TMenubutton" if taxonomy_modified else "Taxonomy.TMenubutton")
+
             menu = ttk.OptionMenu(infoframe, var, var.get(), *options)
-            menu.configure(padding=(0, 0))
+            menu.configure(style=style_name, padding=(0, 0))
             menu.grid(row=row, column=3, sticky="nsew")
 
             missing_fields[key] = menu
 
-            var.trace_add("write", lambda *args, k=key, v=var: update_info_choice(k, v))
+            def on_taxonomy_change(*_, k=key, v=var, m=menu):
+                update_info_choice(k, v)
+                apply_taxonomy_style(k, m)
+
+            var.trace_add("write", on_taxonomy_change)
+            apply_taxonomy_style(key, menu)
             
             def _make_cycle_handler(opts, v, direction):
                 def handler(event):
@@ -2456,7 +2673,18 @@ def update_info_frame():
         suffix = ":" if key else ""
         data_label = ttk.Label(infoframe, text=handle_ellipsis(f"{key.capitalize()}{suffix}"), style=f"InfoData{'Even' if row % 2 == 0 else 'Odd'}.TLabel")
         data_label.grid(row=row, column=4, sticky="nsew")
-        if key and not value:
+        if key.casefold() == "upc":
+            upc_frame = ttk.Frame(infoframe)
+            upc_frame.grid(row=row, column=5, sticky="nsew")
+            upc_frame.columnconfigure(0, weight=1)
+
+            value_label = ttk.Label(upc_frame, text=handle_ellipsis(str(value)) if value else "", style=f"InfoData{'Even' if row % 2 == 0 else 'Odd'}.TLabel")
+            value_label.grid(row=0, column=0, sticky="nsew")
+
+            add_upc_button = ttk.Button(upc_frame, text="Add UPC", command=add_upc)
+            add_upc_button.grid(row=0, column=1, sticky="nsew")
+            add_upc_button.configure(padding=(0, 0))
+        elif key and not value:
             var = tk.StringVar(value="")
             entry = ttk.Entry(infoframe, textvariable=var)
             entry.grid(row=row, column=5, sticky="nsew")
@@ -2480,6 +2708,63 @@ def update_info_frame():
         infoframe.rowconfigure(row, weight=1, minsize=20)
 
     infoframe.update_idletasks()
+
+def update_source_record():
+    if not active_game_data:
+        handle_error("No game data available.")
+        return False
+
+    title = handle_normalized_text(active_game_data.get("title", ""))
+    platform = get_platform_name()
+    source_file = Path(f"{BASE_DIR}/Data/{platform}.xlsx")
+
+    try:
+        source_data = pd.read_excel(source_file, engine="openpyxl", dtype=str).fillna("")
+        source_data.columns = handle_normalized_cols(source_data.columns)
+        matching_row = (source_data["title"].map(handle_normalized_text) == title)
+        if not matching_row.any():
+            handle_error(f"No matching game found for title '{title}' in source data.")
+            return False
+
+        existing_row = source_data.loc[matching_row]
+        existing_added = existing_row["added"].iloc[0]
+        existing_modified = existing_row["modified"].iloc[0] if "modified" in existing_row else None
+
+        record = {
+            "title": active_game_data.get("title", ""),
+            "release_date": active_game_data.get("release_date", ""),
+            "publisher": active_game_data.get("publisher", ""),
+            "developer": active_game_data.get("developer", ""),
+            "url": active_game_data.get("url", ""),
+            "platform": platform,
+            "upc": active_contexts.get("upc", ""),
+            "added": existing_added,
+        }
+
+        for key in get_taxonomy_keys():
+            record[key] = active_taxonomy.get(key, "")
+
+        for key in get_all_contexts():
+            source_key = key[:-1] if key.endswith("s") else key
+            record[source_key] = active_contexts.get(key, "")
+
+        normalized_record = {str(key).lower().replace(" ", "_"): value for key, value in record.items()}
+        changed = any(str(existing_row.get(column, "")) != str(value) for column, value in normalized_record.items())
+        normalized_record["modified"] = (get_timestamp() if changed else existing_modified)
+
+        for column, value in normalized_record.items():
+            if column in source_data.columns:
+                source_data.loc[matching_row, column] = value
+
+        source_data.to_excel(source_file, engine="openpyxl", index=False)
+
+        active_source_taxonomy.update(active_taxonomy)
+        print(f"Debug: Updated source data for title '{title}' ({platform})")
+        return True
+
+    except Exception as exc:
+        handle_error(f"Error updating source data: {exc}")
+        return False
 
 def update_thumbnail():
     global thumbnail_label, thumbnail_image, thumbnail_tooltip
@@ -2616,6 +2901,12 @@ def main():
     odd_bg = active_settings["theming"]["custom_colors"]["row_odd_bg"]
     style.configure("InfoDataEven.TLabel", background=even_bg)
     style.configure("InfoDataOdd.TLabel", background=odd_bg)
+
+    modified_color = get_color("taxonomy_modified", "#FFCC66")
+    normal_color = "#e0e0e0"
+
+    style.configure("ModifiedTaxonomy.TMenubutton", background=modified_color, foreground="#000000", lightcolor=modify_color(modified_color, 0.2), darkcolor=modify_color(modified_color, -0.1), bordercolor=modify_color(modified_color, -0.2))
+    style.map("ModifiedTaxonomy.TMenubutton", background=[("active", modified_color), ("pressed", modified_color), ("!disabled", modified_color)])
 
     main_notebook = ttk.Notebook(root)
     main_notebook.grid(row=0, column=0, sticky="nsew", padx=4, pady=4)

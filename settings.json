@@ -12,6 +12,7 @@
         "3DS": "Nintendo 3DS",
         "GB": "Game Boy",
         "GC": "GameCube",
+        "N64": "Nintendo 64",
         "XBOX360": "Xbox 360",
         "XBOX": "Xbox",
         "GBA": "Game Boy Advance"
@@ -72,15 +73,21 @@
     "taxonomy": {
         "player": [
             "SP",
-            "MP",
             "SP/MP",
-            "Coop",
             "SP/Coop",
+            "SP/MP/Coop",
+            "SP/Hotseat",
+            "SP/MP/Hotseat",
+            "SP/Coop/Hotseat",
+            "MP",
             "MP/Coop",
+            "MP/Hotseat",
+            "Coop",
             "MMO"
         ],
         "style": [
             "Cartoony",
+            "Hand-drawn",
             "Realistic",
             "Stylized"
         ],
@@ -90,6 +97,7 @@
             "2.5D",
             "3D",
             "3D on 2D",
+            "Mixed",
             "FMV",
             "Pre-rendered"
         ],
@@ -113,14 +121,34 @@
             "Branching",
             "Hub & Spoke",
             "Linear",
-            "Non-Linear",
-            "Open World"
+            "Non-Linear"
         ],
         "movement": [
             "Free-Roaming",
             "Grid-Based",
             "On-Rails",
+            "On-Track",
             "Stationary"
+        ],
+        "tone": [
+            "Adult",
+            "Comedic",
+            "Dark",
+            "Dramatic",
+            "Educational",
+            "Epic",
+            "Lighthearted",
+            "Lovecraftian",
+            "Neutral",
+            "Noir",
+            "Over-the-Top",
+            "Political",
+            "Relaxed",
+            "Romantic",
+            "Serious",
+            "Surreal",
+            "Tactical",
+            "Thriller"
         ],
         "era": [
             "Prehistoric",
@@ -135,6 +163,7 @@
             "Industrial",
             "WWI",
             "WWII",
+            "Cold War",
             "Contemporary",
             "Retro-Futuristic",
             "Near-Future",
@@ -144,39 +173,58 @@
         "setting": [
             "Arctic",
             "Desert",
+            "Dungeon",
             "Expansive",
             "Forest",
+            "Indoor",
+            "Island",
             "Jungle",
+            "Nature",
+            "Open World",
+            "Outdoor",
+            "Prison",
             "Rural",
             "Space",
             "Stadium",
             "Suburban",
+            "Tabletop",
             "Toy",
             "Urban"
         ],
         "theme": [
             "Alien Invasion",
+            "Animal",
+            "Christmas",
             "Crime",
             "Cyberpunk",
+            "Dystopian",
             "Everyday",
             "Fantasy",
+            "Gothic",
             "Historical",
             "Horror",
+            "Law Enforcement",
+            "Microscopic",
             "Mystery",
+            "Ninja",
             "Pirate",
             "Post-Apoc",
             "Raypunk",
+            "Samurai",
             "Sci-Fi",
             "Sports",
             "Spy / Espionage",
             "Steampunk",
             "Superhero",
+            "Supernatural",
+            "Vampire",
             "War / Military",
             "Western",
             "Zombie"
         ],
         "objective": [
             "4X",
+            "Aimless",
             "Collect-a-thon",
             "Competitive",
             "Expansion",
@@ -185,27 +233,37 @@
             "Extraction",
             "High Score",
             "Objective-Based",
+            "Player-Driven",
+            "Story-Driven",
             "Survival",
             "Timetrial"
         ],
         "gameplay": [
-            "Adventure",
+            "Arcade",
+            "Base Building",
             "Battle Royale",
             "Beat 'Em Up",
+            "Biking",
+            "Bowling",
             "Bullet Hell",
-            "Card Game",
+            "Card",
             "City Builder",
             "Construction & Management",
-            "Dating Sim",
+            "Dating",
             "Deck Builder",
+            "Driving",
             "Dungeon Crawler",
             "Farming",
             "Fighting",
+            "Fishing",
             "Flying",
             "Hack & Slash",
             "Hidden Object",
             "Hunting",
             "Looter Shooter",
+            "Management",
+            "Match 3",
+            "Physics-Based",
             "Platforming",
             "Point & Click Adventure",
             "Racing",
@@ -213,7 +271,13 @@
             "Rogue-lite",
             "Role-Playing",
             "Run & Gun",
+            "Rhythm",
+            "Soccer",
             "Shooting",
+            "Skateboarding",
+            "Skiing",
+            "Sneaking",
+            "Snowboarding",
             "Strategy"
         ],
         "type": [
@@ -221,34 +285,6 @@
             "Simulator",
             "Puzzle"
         ]
-    },
-    "taxonomy_mapping": {
-        "FPS": {
-            "time": "Real-Time",
-            "perspective": "1st Person",
-            "gameplay": "Shooting"
-        },
-        "TPS": {
-            "time": "Real-Time",
-            "perspective": "3rd Person",
-            "gameplay": "Shooting"
-        },
-        "Blobber": {
-            "time": "Turn-Based",
-            "perspective": "1st Person",
-            "movement": "Grid-Based"
-        },
-        "RTS": {
-            "time": "Real-Time",
-            "gameplay": "Strategy"
-        },
-        "RPG": {
-            "gameplay": "Role-Playing"
-        },
-        "Platformer": {
-            "time": "Real-Time",
-            "gameplay": "Platforming"
-        }
     },
     "OS": {
         "Amiga": {
@@ -288,10 +324,10 @@
                 "2000",
                 "XP",
                 "Vista",
-                "Win7",
-                "Win8",
-                "Win10",
-                "Win11"
+                "7",
+                "8",
+                "10",
+                "11"
             ]
         }
     },
@@ -309,6 +345,7 @@
         "Ripped",
         "Edition",
         "Developer",
+        "Publisher",
         "Payed",
         "Value",
         "Sold",
@@ -320,23 +357,29 @@
         "2000",
         "XP",
         "Vista",
-        "Win7",
-        "Win10",
+        "7",
+        "10",
+        "11",
         "DX",
+        "Age Rating",
         "Copy Protection",
         "Playable",
         "Spawnable",
         "Force Feedback",
         "Coop",
         "Multiplayer",
+        "Hotseat",
         "Singleplayer",
         "Player",
+        "PMin",
+        "PMax",
         "Style",
         "Dimension",
         "Time",
         "Perspective",
         "Progression",
         "Movement",
+        "Tone",
         "Era",
         "Setting",
         "Theme",
@@ -348,11 +391,13 @@
         "Rating",
         "Moby Score",
         "Added",
-        "UPC"
+        "Modified",
+        "UPC",
+        "URL",
+        "Price URL"
     ],
     "columns_to_drop": {
         "NOT_PC": [
-            "Format",
             "DX",
             "DOS",
             "3.1",
@@ -362,18 +407,19 @@
             "2000",
             "XP",
             "Vista",
-            "Win7",
-            "Win8",
-            "Win10",
+            "7",
+            "8",
+            "10",
+            "11",
             "Copy Protection",
             "Spawnable",
             "Force Feedback"
         ],
         "Switch": [
-            "Condition",
-            "Singleplayer",
-            "Multiplayer",
-            "Coop"
+            "Condition"
+        ],
+        "PSP": [
+            "Hotseat"
         ]
     },
     "symbols": {
@@ -394,7 +440,8 @@
             "theme": 4,
             "gameplay": 17,
             "dimension": 3,
-            "style": 2
+            "style": 2,
+            "tone": 8
         },
         "Switch": {
             "formats": 6,
@@ -408,8 +455,9 @@
             "era": 12,
             "progression": 3,
             "dimension": 3,
-            "style": 2,
-            "setting": 5
+            "style": 3,
+            "setting": 5,
+            "tone": 8
         },
         "DS": {
             "formats": 6,
@@ -422,7 +470,8 @@
             "era": 6,
             "progression": 3,
             "dimension": 3,
-            "setting": 5
+            "setting": 5,
+            "tone": 8
         },
         "3DS": {
             "formats": 6,
@@ -435,7 +484,8 @@
             "era": 6,
             "progression": 3,
             "dimension": 3,
-            "setting": 5
+            "setting": 5,
+            "tone": 8
         },
         "GB": {
             "formats": 6,
@@ -447,7 +497,8 @@
             "theme": 4,
             "era": 6,
             "progression": 3,
-            "setting": 5
+            "setting": 5,
+            "tone": 8
         },
         "PSP": {
             "formats": 6,
@@ -455,14 +506,15 @@
             "case_conditions": 0,
             "contents": 0,
             "editions": 0,
-            "style": 1,
+            "style": 2,
             "objective": 8,
             "theme": 11,
             "era": 14,
             "setting": 10,
             "progression": 2,
             "perspective": 1,
-            "dimension": 3
+            "dimension": 3,
+            "tone": 8
         },
         "Default": {
             "formats": 1,
@@ -470,14 +522,15 @@
             "case_conditions": 0,
             "contents": 0,
             "editions": 0,
-            "style": 1,
+            "style": 2,
             "dimension": 3,
-            "era": 12,
-            "setting": 2,
-            "theme": 1,
-            "objective": 8,
-            "gameplay": 24,
-            "progression": 2
+            "era": 13,
+            "setting": 10,
+            "theme": 7,
+            "objective": 5,
+            "gameplay": 34,
+            "progression": 2,
+            "tone": 8
         },
         "GBA": {
             "conditions": 3,
@@ -488,7 +541,8 @@
             "objective": 7,
             "theme": 4,
             "era": 6,
-            "progression": 3
+            "progression": 3,
+            "tone": 8
         },
         "PS2": {
             "conditions": 4,
@@ -497,14 +551,31 @@
             "editions": 0,
             "formats": 1,
             "dimension": 3,
-            "style": 1,
+            "style": 3,
             "perspective": 1,
             "progression": 2,
             "era": 12,
             "setting": 9,
             "theme": 1,
             "objective": 4,
-            "gameplay": 17
+            "gameplay": 17,
+            "tone": 8
+        },
+        "XBOX360": {
+            "player": 1,
+            "style": 2,
+            "dimension": 3,
+            "time": 0,
+            "perspective": 1,
+            "progression": 2,
+            "movement": 0,
+            "tone": 8,
+            "era": 16,
+            "setting": 13,
+            "theme": 19,
+            "objective": 6,
+            "gameplay": 34,
+            "type": 0
         }
     },
     "scraped_data": {
@@ -512,7 +583,8 @@
         "release_date": 1900,
         "developer": "",
         "publisher": "",
-        "rating": 0
+        "rating": 0,
+        "url": ""
     },
     "scraped_taxonomy": {
         "perspective": [],
@@ -567,7 +639,8 @@
             "editions": "#0099BB",
             "custom_context_fallback": "#00AAAA",
             "row_even_bg": "#f8f8f8",
-            "row_odd_bg": "#e8e8e8"
+            "row_odd_bg": "#e8e8e8",
+            "taxonomy_modified": "#FFCC66"
         }
     },
     "shortcuts": {
