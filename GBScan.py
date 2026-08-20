@@ -741,12 +741,37 @@ def get_soup(url):
     soup = bs.BeautifulSoup(response.text, 'html.parser')
     return soup if soup is not None else None
 
-def get_specific_soup(url, tag, class_name):
-    soup = get_soup(url)
-    if soup is None:
-        return None
+def get_specific_soup_by_class(url, tag, class_name, known_soup=None):
+    if known_soup is not None:
+        soup = known_soup
+        response_url = url
+    else:
+        response = get_response(url)
+        if response is None:
+            return False, None, None, None
+
+        soup = bs.BeautifulSoup(response.text, "html.parser")
+        response_url = response.url
+
     element = soup.find(tag, class_=class_name)
-    return element if element is not None else None
+
+    return element is not None, element, soup, response_url
+
+def get_specific_soup_by_id(url, tag, id_name, known_soup=None):
+    if known_soup is not None:
+        soup = known_soup
+        response_url = url
+    else:
+        response = get_response(url)
+        if response is None:
+            return False, None, None, None
+
+        soup = bs.BeautifulSoup(response.text, "html.parser")
+        response_url = response.url
+
+    element = soup.find(tag, id=id_name)
+
+    return element is not None, element, soup, response_url
 
 def get_taxonomy_keys() -> list:
     if active_settings is None:
@@ -2034,14 +2059,19 @@ def scrape_pricecharting_price(query):
         return None, None
 
     price_soup = None
+    big_soup = None
+    product_page = False
 
     if is_upc(query):
         search_url = f"https://www.pricecharting.com/search-products?type=prices&q={query}"
-        price_soup = get_specific_soup(search_url, "table", "js-addable hoverable-rows sortable")
+        _, price_soup, big_soup, response_url = get_specific_soup_by_class(search_url, "table", "js-addable hoverable-rows sortable")
 
     if price_soup is None:
         search_url = f"https://www.pricecharting.com/search-products?type=prices&q={title}"
-        price_soup = get_specific_soup(search_url, "table", "js-addable hoverable-rows sortable")
+        _, price_soup, big_soup, response_url = get_specific_soup_by_class(search_url, "table", "js-addable hoverable-rows sortable")
+
+    if price_soup is None:
+        product_page, price_soup, big_soup, response_url = get_specific_soup_by_id(search_url, "table", "price_data", known_soup=big_soup)
 
     print(f"Debug: Search URL: {search_url}")
     if price_soup is None:
@@ -2056,6 +2086,28 @@ def scrape_pricecharting_price(query):
     # Find the row that contains the platform name
     use_pal = is_toggled("use_pal")
     text_to_find = "pal " + platform_name.lower() if use_pal else platform_name.lower()
+    condition = get_condition()
+    sealed = condition and 'sealed' in condition.lower()
+    contents = get_contents()
+    loose = contents and 'loose' in contents.lower()
+
+    if product_page:
+        platform_row = price_soup
+
+        item_link = response_url
+
+        if sealed:
+            price_cell_id = "new_price"
+        elif loose:
+            price_cell_id = "used_price"
+        else:
+            price_cell_id = "complete_price"
+
+        price_cell = price_soup.find("td", id=price_cell_id)
+        price_span = price_cell.find("span", class_="price") if price_cell else None
+        price = price_span.get_text(" ", strip=True) if price_span else None
+
+        return price, item_link
 
     # Get all rows that contain the platform name, avoiding duplicates
     platform_rows = []
@@ -2093,12 +2145,7 @@ def scrape_pricecharting_price(query):
     item_cell = platform_row.find('td', class_='title')
     item_link = item_cell.find('a')['href'] if item_cell else None
     
-    condition = get_condition()
-    sealed = condition and 'sealed' in condition.lower()
-    contents = get_contents()
-    loose = contents and 'loose' in contents.lower()
     price_type = 'New Price' if sealed else 'Loose' if loose else 'CIB Price'
-
     # Get the corresponding Used Price or New Price column depending on the condition
     price_header_text = price_soup.find('span', string=price_type)
 
