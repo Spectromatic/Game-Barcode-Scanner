@@ -2764,7 +2764,7 @@ def update_info_frame():
             menu = ttk.OptionMenu(infoframe, var, var.get(), *options)
             menu.configure(style=style_name, padding=(0, 0))
             menu.grid(row=row, column=3, sticky="nsew")
-
+            menu.bind("<Button-1>", lambda event, widget=menu: widget.focus_set(), add="+")
             missing_fields[key] = menu
 
             def on_taxonomy_change(*_, k=key, v=var, m=menu):
