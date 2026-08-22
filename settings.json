@@ -60,13 +60,34 @@
         "editions": [
             "Standard",
             "Re-Release",
-            "Platinum",
             "Compilation",
             "Bundle",
             "Special",
             "Collector",
             "GOTY",
             "Promo"
+        ],
+        "release_range": []
+    },
+    "release_ranges": {
+        "PS1": [
+            "Platinum",
+            "Greatest Hits"
+        ],
+        "PS2": [
+            "Platinum",
+            "Greatest Hits"
+        ],
+        "PS3": [
+            "Platinum"
+        ],
+        "PSP": [
+            "Platinum",
+            "Essentials",
+            "Greatest Hits"
+        ],
+        "Switch": [
+            "Nintendo Selects"
         ]
     },
     "custom_context": {},
@@ -164,6 +185,7 @@
             "WWI",
             "WWII",
             "Cold War",
+            "1970's",
             "Contemporary",
             "Retro-Futuristic",
             "Near-Future",
@@ -172,12 +194,15 @@
         ],
         "setting": [
             "Arctic",
+            "Base",
+            "Cemetary",
             "Desert",
             "Dungeon",
             "Expansive",
             "Forest",
             "Indoor",
             "Island",
+            "Japan",
             "Jungle",
             "Nature",
             "Open World",
@@ -205,10 +230,12 @@
             "Horror",
             "Law Enforcement",
             "Microscopic",
+            "Monster",
             "Mystery",
             "Ninja",
             "Pirate",
             "Post-Apoc",
+            "Rally",
             "Raypunk",
             "Samurai",
             "Sci-Fi",
@@ -583,9 +610,14 @@
         "release_date": 1900,
         "developer": "",
         "publisher": "",
-        "rating": 0,
-        "url": ""
+        "moby_score": 0,
+        "age_rating": "",
+        "url": "",
+        "price_url": ""
     },
+    "scraped_data_exclusion": [
+        "price_url"
+    ],
     "scraped_taxonomy": {
         "perspective": [],
         "pacing": "",

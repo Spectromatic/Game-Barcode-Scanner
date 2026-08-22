@@ -36,6 +36,7 @@ frames = []
 frames_padded = []
 infoframe = None
 choicesframe = None
+contextframe = None
 contextlist = []
 searchentry = None
 acceptbutton = None
@@ -47,6 +48,7 @@ missing_fields = {}
 thumbnail_label = None
 thumbnail_image = None
 thumbnail_tooltip = None
+thumbnail_refresh_btn = None
 
 def add_id(key):
     print(f"Debug: Adding Moby ID")
@@ -65,16 +67,19 @@ def add_id(key):
         return
 
     moby_url = f"https://www.mobygames.com/game/{moby_id}"
+    thumbnail_path = handle_thumbnail_rename(moby_url)
+    active_game_data[key] = moby_url
+
     if active_game_is_new:
-        active_game_data[key] = moby_url
         missing_fields.pop(key, None)
         update_info_frame()
+        update_thumbnail(thumbnail_path)
         return
 
-    active_game_data[key] = moby_url
     if update_source_record():
         missing_fields.pop(key, None)
         update_info_frame()
+        update_thumbnail(thumbnail_path)
 
 def add_upc():
     if not active_contexts:
@@ -104,6 +109,42 @@ def add_upc():
         return
     update_info_frame()
 
+def add_url(key):
+    print(f"Debug: Adding URL for key '{key}'")
+    global active_game_data
+    if not active_game_data:
+        handle_error("No game data available.")
+        return
+
+    new_url = simpledialog.askstring("Add URL", f"Enter the pricecharting URL for '{active_game_data.get('title', '')}':")
+    if new_url is None:
+        return
+
+    new_url = new_url.strip()
+    if not new_url.startswith("https://www.pricecharting.com"):
+        handle_error("URL must start with 'https://www.pricecharting.com'.")
+        return
+
+    # Scrape for the price if we don't already have one
+    if not active_contexts.get("price"):
+        price, _ = scrape_pricecharting_price(active_contexts.get("upc") or active_game_data.get("title", ""), known_url=new_url)
+        if price is not None:
+            active_contexts["price"] = price
+
+    if active_game_is_new:
+        active_game_data[key] = new_url
+        missing_fields.pop(key, None)
+        update_info_frame()
+        handle_thumbnail_missing()
+        return
+
+    active_game_data[key] = new_url
+    if update_source_record():
+        missing_fields.pop(key, None)
+        update_info_frame()
+
+    handle_thumbnail_missing()
+
 def append_new_source_record():
     platform = get_platform_name()
     source_file = Path(BASE_DIR) / "Data" / f"{platform}.xlsx"
@@ -111,16 +152,12 @@ def append_new_source_record():
     diff_dir.mkdir(parents=True, exist_ok=True)
     timestamp = get_timestamp()
 
-    record = {
-        "title": active_game_data.get("title", ""),
-        "release_date": active_game_data.get("release_date", ""),
-        "publisher": active_game_data.get("publisher", ""),
-        "developer": active_game_data.get("developer", ""),
+    record = get_source_record()
+    record.update({
         "added": timestamp,
         "modified": "",
-        "url": active_game_data.get("url", ""),
-        "platform": get_platform_name()
-    }
+        "platform": get_platform_name(),
+    })
 
     for key in get_taxonomy_keys():
         record[key] = active_taxonomy.get(key, "")
@@ -286,6 +323,24 @@ def cycle_setup(name, direction):
             searchentry.focus_set()
     return handler
 
+def edit_data(parent, key):
+    value_var = tk.StringVar(value=str(active_game_data.get(key, "")))
+
+    entry = ttk.Entry(parent, textvariable=value_var)
+    entry.grid(row=0, column=0, sticky="nsew")
+
+    def save_value(event=None):
+        active_game_data[key] = value_var.get().strip()
+        update_info_frame()
+        return "break"
+
+    entry.bind("<Return>", save_value)
+    entry.bind("<FocusOut>", save_value)
+    entry.bind("<Escape>", lambda event: update_info_frame())
+
+    entry.focus_set()
+    entry.select_range(0, tk.END)
+
 def exclusion_rule_add(frame, platform, add_rule_vars, invert=False):
     if active_settings is None:
         return
@@ -352,7 +407,13 @@ def game_accept():
         if context == "contents":
             continue  # Skip contents since it's already handled
         context_singular = context[:-1] if context.endswith('s') else context
-        contexts[str(context_singular).replace("_", " ").title()] = get_context_data(context)
+        context_label = str(context_singular).replace("_", " ").title()
+        context_value = get_context_data(context)
+
+        if is_context_value(context, "editions", "re-release"):
+            context_value = get_release_range()
+
+        contexts[context_label] = context_value
 
     taxonomies = {}
     for taxonomy in get_taxonomy_keys():
@@ -373,6 +434,9 @@ def game_accept():
         **contents,
         **contexts,
         "Developer": [active_game_data.get('developer')] if active_game_data.get('developer') else "",
+        "Publisher": [active_game_data.get('publisher')] if active_game_data.get('publisher') else "",
+        "Age Rating": [active_game_data.get('age_rating')] if active_game_data.get('age_rating') else "",
+        "Moby Score": [active_game_data.get('moby_score')] if active_game_data.get('moby_score') else "",
         "Payed": [active_contexts.get('payed')] if active_contexts.get('payed') else "",
         "Value": [active_contexts.get('price')] if active_contexts.get('price') else "",
         "DOS": [active_specs.get('DOS', '')] if active_specs else "",
@@ -396,7 +460,6 @@ def game_accept():
         "Singleplayer": active_game_data.get('singleplayer') if active_game_data.get('singleplayer') is not None else "",
         **taxonomies,
         "Genre": active_taxonomy.get('genre') if active_taxonomy.get('genre') else "",
-        "Moby Score": active_taxonomy.get('moby_score') if active_taxonomy.get('moby_score') else "",
         "Added": [get_timestamp()],
         "Modified": [get_timestamp() if not active_game_is_new else ""],
         "UPC": [active_contexts.get('upc')] if active_contexts.get('upc') else "",
@@ -423,7 +486,7 @@ def game_accept():
                 return
 
     # If there's changes to the taxonomy 
-    elif is_source_taxonomy_changed():
+    elif is_source_taxonomy_changed() or is_source_game_data_changed():
         response = messagebox.askyesno("Update title", f"Do you wish to update the info for '{selected_title}' in the source database?")
         if response and not update_source_record():
             handle_error(f"Unable to update '{selected_title}' in the source database.")
@@ -463,7 +526,7 @@ def game_search_focus():
     searchentry.focus_set()
 
 def game_decline():
-    if not active_game_is_new and is_source_taxonomy_changed():
+    if not active_game_is_new and (is_source_taxonomy_changed() or is_source_game_data_changed()):
         response = messagebox.askyesno("Update source database", "Do you wish to update the source database before discarding this game?")
 
         if response:
@@ -514,13 +577,29 @@ def get_fixed_contexts():
 def get_context_options(key) -> list:
     if active_settings is None:
         return []
+
+    if key == "release_range":
+        return get_release_ranges()
+    
     return active_settings.get("context", {}).get(key, []) if key in active_settings.get("context", {}) else active_settings.get("custom_context", {}).get(key, [])
 
 def get_context_data(key):
     if active_settings is None:
-        return []
-    context = "context" if key in active_settings.get("context", {}) else "custom_context" if key in active_settings.get("custom_context", {}) else None
-    return active_settings[context][key][active_selections.get(key, tk.IntVar()).get()] if context else []
+        return ""
+
+    options = get_context_options(key)
+    if not options:
+        return ""
+
+    selection = active_selections.get(key)
+    index = selection.get() if selection is not None else 0
+
+    if index < 0 or index >= len(options):
+        index = 0
+        if selection is not None:
+            selection.set(index)
+
+    return options[index]
 
 def get_custom_contexts():
     if active_settings is None:
@@ -678,6 +757,8 @@ def get_moby_id(url=None):
 def get_options_for_key(key):
     if active_settings is None:
         return []
+    if key == "release_range":
+        return get_release_ranges()
     if key in active_settings.get("context", {}):
         return active_settings["context"][key]
     if key in active_settings.get("custom_context", {}):
@@ -706,7 +787,20 @@ def get_os_versions() -> list:
 def get_platform_key():
     if active_settings is None:
         return None
-    return get_platforms()[active_selections["platforms"].get()]
+    
+    platforms = get_platforms()
+    if not platforms:
+        return None
+
+    platform_selection = active_selections.get("platforms")
+    if platform_selection is None:
+        return platforms[0]
+
+    index = platform_selection.get()
+    if index < 0 or index >= len(platforms):
+        return platforms[0]
+
+    return platforms[index]
 
 def get_platforms() -> list:
     if active_settings is None:
@@ -717,6 +811,30 @@ def get_platform_name():
     if active_settings is None:
         return None
     return active_settings["platforms"][get_platform_key()]
+
+def get_named_release_ranges():
+    return [value for value in get_release_ranges() if value.strip()]
+
+def get_release_range():
+    named_ranges = get_named_release_ranges()
+
+    if not named_ranges:
+        return ""
+
+    if len(named_ranges) == 1:
+        if str(get_edition() or "").casefold() == "re-release":
+            return named_ranges[0]
+        return ""
+
+    return str(active_contexts.get("release_range", "") or "")
+
+def get_release_ranges():
+    if active_settings is None:
+        return []
+
+    platform = get_platform_key()
+    ranges = active_settings.get("release_ranges", {}).get(platform, [])
+    return [str(value) for value in ranges if value is not None]
 
 def get_response(url, timeout=100, **kwargs):
     try:
@@ -733,6 +851,14 @@ def get_simplified_text(text):
     # Get rid of extra spaces between words
     text = " ".join(text.split())
     return text
+
+def get_source_record(game_data=None):
+    if active_settings is None:
+        return {}
+    game_data = active_game_data if game_data is None else game_data
+    exclusions = {str(key).strip().casefold() for key in active_settings.get("scraped_data_exclusion", [])}
+
+    return {key: game_data.get(key, "") for key in active_settings.get("scraped_data", {}) if str(key).strip().casefold() not in exclusions}
 
 def get_soup(url):
     response = get_response(url)
@@ -793,8 +919,10 @@ def get_taxonomy_default_idx(key: str) -> int:
         idx = int(platform_defaults[key])
     return idx
 
-def get_thumbnail_path(url):
-    game_id = get_moby_id(url)
+def get_thumbnail_path(url=None):
+    game_id = None
+    if url is not None:
+        game_id = get_moby_id(url)
     platform = get_platform_name()
     title = get_simplified_text(active_game_data.get("title", "")) if active_game_data else ""
 
@@ -802,7 +930,7 @@ def get_thumbnail_path(url):
         return None
 
     image_dir = Path(f"{BASE_DIR}/Data/Images/{platform}")
-    image_path = Path(image_dir / f"{game_id}.png") if game_id else Path(image_dir / f"{title.replace(' ', '_')}.png")
+    image_path = Path(image_dir / f"{game_id}.png") if game_id is not None else Path(image_dir / f"{title.replace(' ', '_')}.png")
 
     return image_path if image_path.is_file() else None
 
@@ -860,11 +988,23 @@ def handle_missing_field(widget, key):
 
     return entry
 
-def handle_missing_moby_id_shortcut(event=None):
+def handle_missing_id_shortcut(event=None):
     if infoframe is None:
         return
 
     id_button = missing_fields.get("url")
+    if id_button:
+        id_button.focus_set()
+        id_button.invoke()
+        return "break"
+
+    return None
+
+def handle_missing_price_url_shortcut(event=None):
+    if infoframe is None:
+        return
+
+    id_button = missing_fields.get("price_url")
     if id_button:
         id_button.focus_set()
         id_button.invoke()
@@ -964,6 +1104,70 @@ def handle_tab_key(root, event, direction=1):
 
     return "break"
 
+def handle_thumbnail_missing():
+    image_path = get_thumbnail_path(active_game_data.get("url")) if active_game_data else None
+
+    if image_path is None:
+        price_url = active_game_data.get("price_url", "")
+        soup = get_soup(price_url)
+        if soup is None:
+            handle_error("Unable to fetch thumbnail from the price URL.")
+            return
+
+        image_path = scrape_pricecharting_img(soup)
+    
+    update_thumbnail(image_path)
+    return image_path
+
+def handle_thumbnail_refresh():
+    if not active_game_data:
+        return
+
+    moby_url = active_game_data.get("url", "")
+    price_url = active_game_data.get("price_url", "")
+
+    if not moby_url or not price_url:
+        return
+
+    soup = get_soup(price_url)
+    if soup is None:
+        handle_error("Unable to fetch the thumbnail from the PriceCharting URL.")
+        return
+
+    image_path = scrape_pricecharting_img(soup, force=True)
+    if image_path is None:
+        handle_error("Unable to refresh the thumbnail.")
+        return
+
+    update_thumbnail(image_path)
+
+def handle_thumbnail_rename(url):
+    if not active_game_data or not url:
+        return None
+
+    title_image_path = get_thumbnail_path()
+    platform = get_platform_name()
+    id = get_moby_id(url)
+
+    if not platform or not id:
+        return title_image_path
+
+    image_dir = Path(f"{BASE_DIR} / Data / Images / {platform}")
+    moby_image_path = image_dir / f"{id}.png"
+
+    if moby_image_path.exists():
+        return moby_image_path
+
+    if title_image_path is None or title_image_path == moby_image_path:
+        return moby_image_path if moby_image_path.exists() else title_image_path
+
+    try:
+        title_image_path.rename(moby_image_path)
+        return moby_image_path
+    except OSError as exc:
+        print(f"Debug: Failed to rename thumbnail: {exc}")
+        return title_image_path
+
 def handle_toggle_change(toggle):
     if active_settings is None:
         return
@@ -978,18 +1182,33 @@ def handle_url(event, url):
     if url:
         webbrowser.open_new_tab(url)
 
+def is_context_value(context, key, value):
+    if context.casefold() != key.casefold():
+        return False
+    
+    selected_value = get_context_data(key)
+    return str(selected_value or "").casefold() == str(value or "").casefold()
+
 def is_os():
     if active_settings is None:
         return False
     return get_platform_key() in active_settings.get("OS", {})
 
+def is_release_range_large_enough():
+    return len(get_named_release_ranges()) > 1
+
 def is_source_game_data_changed(key = None):
     if active_game_is_new or not active_source_game_data:
         return False
 
+    source_record = get_source_record()
+    source_keys = source_record.keys()
+
     if key is not None:
+        if key not in source_keys:
+            return False
         return str(active_game_data.get(key, "")) != str(active_source_game_data.get(key, ""))
-    return any(str(active_game_data.get(k, "")) != str(active_source_game_data.get(k, "")) for k in active_game_data.keys())
+    return any(str(active_game_data.get(source_key, "")) != str(active_source_game_data.get(source_key, "")) for source_key in source_keys)
 
 def is_source_taxonomy_changed(key = None):
     if active_game_is_new or not active_source_taxonomy:
@@ -998,6 +1217,11 @@ def is_source_taxonomy_changed(key = None):
     if key is not None:
         return str(active_taxonomy.get(key, "")) != str(active_source_taxonomy.get(key, ""))
     return any(str(active_taxonomy.get(k, "")) != str(active_source_taxonomy.get(k, "")) for k in get_taxonomy_keys())
+
+def is_thumbnail_missing():
+    if thumbnail_label is None:
+        return True
+    return thumbnail_label.cget("image") == ""
 
 def is_toggled(toggle):
     if active_settings is None:
@@ -1375,6 +1599,7 @@ def populate_context_choices(frame, name):
         selections_update(name, idx)
 
     var.trace_add("write", on_change)
+    release_range_enabled = (name != "release_range" or str(get_edition() or "").casefold() == "re-release")
 
     # Button theming and button position
     for index, option in enumerate(options):
@@ -1388,14 +1613,11 @@ def populate_context_choices(frame, name):
                         darkcolor=modify_color(get_color(name, "#c0c0c0"), -0.1),
                         bordercolor=modify_color(get_color(name, "#a0a0a0"), -0.2))
         style.map(style_name,
-                    background=[('pressed', modify_color(get_color(name, "#d0d0d0"), -0.1)),
-                                ('active', modify_color(get_color(name, "#d0d0d0"), 0.1))],
-                    foreground=[('pressed', modify_color(get_color(name, "#000000"), 0.25)), 
-                                ('active', modify_color(get_color(name, "#000000"), 0.5))],
-                    bordercolor=[('pressed', modify_color(get_color(name, "#a0a0a0"), -0.3)),
-                                 ('active', modify_color(get_color(name, "#a0a0a0"), -0.1))],
-                    relief=[('pressed', 'sunken'), ('!pressed', 'raised')])
-        btn = ttk.Button(frame, text=option, width=max_length, command=lambda i=index: var.set(i), style=style_name)
+                    background=[("disabled", "#b0b0b0"), ('pressed', modify_color(get_color(name, "#d0d0d0"), -0.1)), ('active', modify_color(get_color(name, "#d0d0d0"), 0.1))],
+                    foreground=[("disabled", "#707070"), ('pressed', modify_color(get_color(name, "#000000"), 0.25)), ('active', modify_color(get_color(name, "#000000"), 0.5))],
+                    bordercolor=[("disabled", "#a0a0a0"), ('pressed', modify_color(get_color(name, "#a0a0a0"), -0.3)), ('active', modify_color(get_color(name, "#a0a0a0"), -0.1))],
+                    relief=[("disabled", "raised"), ('pressed', 'sunken'), ('!pressed', 'raised')])
+        btn = ttk.Button(frame, text=option, width=max_length, command=lambda i=index: var.set(i), style=style_name, state="normal" if release_range_enabled else "disabled")
         btn.config(padding=(0, 0))
         btn.pack(side=tk.LEFT)
         buttons.append(btn)
@@ -1424,6 +1646,9 @@ def populate_context_frames(contextframe, contextrow, contextlist, frames) -> in
     contextrow += 1
 
     for context in get_fixed_contexts():
+        if context == "release_range" and not is_release_range_large_enough():
+            continue
+
         frame = ttk.Frame(contextframe, padding="2")
         frame.grid(row=contextrow, column=0, sticky=tk.W+tk.E)
         frames.append(frame)
@@ -1700,6 +1925,15 @@ def populate_toggles(frame):
             toggle_column = 0
             toggle_row += 1
 
+def rebuild_context_choices():
+    if contextframe is None:
+        return
+
+    populate_context_frames(contextframe, 0, contextlist, frames)
+
+    for key, frame in contextlist:
+        populate_context_choices(frame, key)
+
 def recall_log_item(event=None):
     global logtree, active_settings
     if logtree is None:
@@ -1737,172 +1971,6 @@ def rotated_text_image(text, font_size=12, font_path=None):
     draw.text((0, 0), text, fill="black", font=font)
     img = img.rotate(-90, expand=True)
     return ImageTk.PhotoImage(img)
-
-def scrape_data_moby_score(soup):
-    moby_score = soup.find('div', class_='mobyscore')
-    if moby_score is None:
-        return
-    
-    active_taxonomy['moby_score'] = moby_score.text.strip()
-    return active_taxonomy.get('moby_score')
-
-def scrape_data_perspective(soup):
-    global active_perspective, active_taxonomy
-    if soup is None:
-        return
-
-    perspectives = scrape_for_dt_mul(soup, 'Perspective') or []
-
-    if not perspectives:
-        visual = scrape_for_dt(soup, 'Visual')
-        if visual:
-            perspectives = [visual]
-
-    active_taxonomy['perspective'] = perspectives
-    active_perspective = tk.StringVar(value=perspectives[0]) if perspectives else None
-
-    return active_taxonomy.get('perspective')
-
-def scrape_data_playtype(soup):
-    global active_game_data
-    if soup is None:
-        return
-    
-    if active_settings is None:
-        return
-    
-    offline_players = scrape_for_dt(soup, 'Number of Offline Players') or 0
-    online_players = scrape_for_dt(soup, 'Number of Online Players') or 0
-
-    if not offline_players:
-        offline_players = scrape_for_dt(soup, 'Number of Players Supported') or 0
-
-    # Strip "player" from the end of the strings if present
-    if offline_players:
-        offline_players = re.sub(r'\s*player[s]?\s*$', '', offline_players, flags=re.IGNORECASE)
-        offline_players_max = int(offline_players.split('-')[-1].strip())  # Take the last number if it's a range
-        offline_players_min = int(offline_players.split('-')[0].strip())  # Take the first number if it's a range
-        
-    if online_players:
-        online_players = re.sub(r'\s*player[s]?\s*$', '', online_players, flags=re.IGNORECASE)
-        online_players = int(online_players.split('-')[-1].strip())  # Take the last number if it's a range
-
-    active_game_data['coop'] = active_settings['symbols']['yes'] if offline_players_max > 1 else active_settings['symbols']['no']
-    active_game_data['multiplayer'] = active_settings['symbols']['yes'] if offline_players_max > 1 or online_players > 1 else active_settings['symbols']['no']
-    active_game_data['singleplayer'] = active_settings['symbols']['yes'] if offline_players_min == 1 else active_settings['symbols']['no']
-
-    return
-
-def scrape_data_release_date(soup):
-    if active_settings is None:
-        return
-    # Get the actual platform name from the selected_platform abbreviation
-    selected_abbrev = get_platform_key()
-    actual_platform = get_platform_name()
-    if not actual_platform:
-        handle_error(f"Missing platform abbreviation for '{selected_abbrev}'")
-        return None
-
-    platform_soup = soup.find('ul', id='platformLinks')
-
-    if platform_soup is None:
-        print("Debug: Release Date not found. Trying another method.")
-        release_date = soup.find('dt', string='Released')
-        if release_date is not None:
-            release_date = release_date.find_next_sibling('dd').find('a').text.strip()
-        if release_date is not None:
-            release_date = re.search(r'\d{4}', release_date)
-        if release_date is not None:
-            release_date = release_date.group()
-        active_game_data['release_date'] = release_date
-        return active_game_data.get('release_date')
-
-    # Convert the platform soup to a list of platforms and release dates
-    platform_soup = platform_soup.text.strip()
-    platform_list = [part for part in re.split(r'[(),]', platform_soup)]
-
-    # Extract the release date for the selected platform
-    for i in range(1, len(platform_list), 2):
-        if platform_list[i].strip() == actual_platform:
-            release_date = platform_list[i - 1].strip()
-            break
-    active_game_data['release_date'] = release_date
-
-    return active_game_data.get('release_date')
-
-def scrape_data_title(soup):
-    global active_game_data, active_title
-    if soup is None:
-        return
-
-    titles = []
-    title_soup = soup.find('h1', {'class':'mb-0'})
-    
-    if title_soup is not None:
-        titles.append(title_soup.text.strip())
-
-    aka_soup = soup.find('div', class_='text-sm text-normal text-muted')
-    if aka_soup is not None:
-        for title in aka_soup.find_all('span'):
-            title = title.text.strip()
-            title = re.sub(r'^\s*aka:\s*', '', title).strip()
-            titles.append(title)
-    
-    active_game_data['title'] = titles
-    active_title = tk.StringVar(value=titles[0])
-    return titles
-
-def scrape_game_data(game_url):
-    global active_game_data, active_taxonomy, active_contexts
-
-    if active_settings is None:
-        return None
-    
-    active_game_data = {key: value for key, value in active_settings.get("scraped_data", {}).items()}
-    active_taxonomy = {key: value for key, value in active_settings.get("taxonomy", {}).items()}
-    print(f"Debug: Initial Game Data: {active_game_data}")
-    print(f"Debug: Initial Taxonomy Data: {active_taxonomy}")
-
-    response = get_response(game_url)
-
-    if response is None:
-        return None
-
-    if response.status_code != 200:
-        handle_error(f"Failed to retrieve game data from the website. Status code: {response.status_code}")
-        return None
-
-    soup = bs.BeautifulSoup(response.text, 'html.parser')
-
-    if soup is None:
-        handle_error("Failed to retrieve game data from the website.")
-        return None
-
-    # Extract game data
-    scrape_data_moby_score(soup)
-    scrape_data_perspective(soup)
-    scrape_data_release_date(soup)
-    scrape_data_playtype(soup)
-    scrape_data_title(soup)
-
-    active_game_data['developer'] = scrape_for_dt(soup, 'Developers') or ''
-    active_taxonomy['pacing'] = scrape_for_dt(soup, 'Pacing') or 'Real-Time'
-    active_taxonomy['genre'] = scrape_for_dt(soup, 'Genre') or ''
-    active_taxonomy['gameplay'] = scrape_for_dt(soup, 'Gameplay') or ''
-    active_taxonomy['setting'] = scrape_for_dt(soup, 'Setting') or ''
-
-    active_contexts['format'] = get_format()
-    active_contexts['condition'] = get_condition()
-    active_contexts['case_condition'] = get_case_condition()
-    active_contexts['content'] = get_contents()
-    active_contexts['edition'] = get_edition()
-    for context in get_custom_contexts():
-        active_contexts[context] = get_custom_context_data(context)
-
-    print(f"Debug: Game Data: {active_game_data}")
-    print(f"Debug: Taxonomy Data: {active_taxonomy}")
-    print(f"Debug: Physical Data: {active_contexts}")
-    return active_game_data
 
 def scrape_min_os(soup, dict={}, os=None):
     os_spec = soup.find('td', string='Minimum OS Class Required:')
@@ -1959,55 +2027,7 @@ def scrape_dx(specs, dict={}):
         print(f"Debug: DirectX Version: {dx_version}")
         dict['DX'] = 'DX' + dx_version if dx_version else 'Unknown'
 
-def scrape_prices(game_url):
-    game_url = f"{game_url}/stores"
-    response = get_response(game_url)
-    if response is None:
-        return None
-    soup = bs.BeautifulSoup(response.text, 'html.parser')
-
-    price_soup = soup.find('table', class_='table table-borders table-hover')
-
-    if price_soup is None:
-        print("Debug: No prices table found.")
-        return None
-
-    # Get the mapped platform name from settings
-    platform_name = get_platform_name()
-    if platform_name is None:
-        return None
-    
-    # Find the row that contains the platform name
-    platform_row = price_soup.find_all('td', string=lambda text: text and platform_name in text)
-    if not platform_row:
-        print(f"Debug: No prices found for platform {platform_name}.")
-        return None
-    
-    condition = get_condition()
-    sealed = condition and 'sealed' in condition.lower()
-    price_type = 'New Price' if sealed else 'Used Price'
-    # Get the corresponding Used Price or New Price column depending on the condition
-    price_header = price_soup.find('th', string=price_type)
-    if price_header is None:
-        print(f"Debug: No '{price_type}' column found in prices table.")
-        return None
-    
-    price_index = price_header.parent.find_all('th').index(price_header)
-    price = None
-    for row in platform_row:
-        platform_tr = row.find_parent('tr')
-        row_cells = platform_tr.find_all(['th', 'td'])
-        price_cell = row_cells[price_index]
-        price_text = ' '.join(price_cell.stripped_strings)
-
-        if not re.search(r'[\d\£\$\€]', price_text):
-            continue
-        
-        price = price_text
-
-    return price if price else None
-
-def scrape_pricecharting_img(soup):
+def scrape_pricecharting_img(soup, force=False):
     if soup is None:
         return None
 
@@ -2021,7 +2041,7 @@ def scrape_pricecharting_img(soup):
     img = img_soup.find('img')
     img_path = Path(f"{BASE_DIR}/Data/Images/{platform}/{filename}.png")
 
-    if img_path.is_file():
+    if img_path.is_file() and not force:
         print(f"Debug: Image already exists at {img_path}.")
         return img_path
 
@@ -2046,7 +2066,7 @@ def scrape_pricecharting_img(soup):
         print(f"Debug: Failed to save PriceCharting image: {exc}")
         return None
 
-def scrape_pricecharting_price(query):
+def scrape_pricecharting_price(query, known_url=None):
     skip = False
     if skip:
         print("Debug: Skipping PriceCharting scrape due to skip flag.")
@@ -2062,18 +2082,22 @@ def scrape_pricecharting_price(query):
     big_soup = None
     product_page = False
 
-    if is_upc(query):
+    if is_upc(query) and known_url is None:
         search_url = f"https://www.pricecharting.com/search-products?type=prices&q={query}"
         _, price_soup, big_soup, response_url = get_specific_soup_by_class(search_url, "table", "js-addable hoverable-rows sortable")
 
-    if price_soup is None:
+    if price_soup is None and known_url is None:
         search_url = f"https://www.pricecharting.com/search-products?type=prices&q={title}"
         _, price_soup, big_soup, response_url = get_specific_soup_by_class(search_url, "table", "js-addable hoverable-rows sortable")
+
+    if known_url is not None:
+        search_url = known_url
 
     if price_soup is None:
         product_page, price_soup, big_soup, response_url = get_specific_soup_by_id(search_url, "table", "price_data", known_soup=big_soup)
 
-    print(f"Debug: Search URL: {search_url}")
+    if known_url is None:
+        print(f"Debug: Search URL: {search_url}")
     if price_soup is None:
         print("Debug: No prices table found.")
         return None, None
@@ -2119,21 +2143,25 @@ def scrape_pricecharting_price(query):
     # Among platform rows, find the one with the matching title
     platform_row = None
     modified_title = title
+    edition = str(get_edition() or "").casefold()
+    release_range = get_release_range()
 
     # Adjust title for platinum edition if applicable
-    if "platinum" in edition:
-        modified_title = f"{title} platinum"
-        print(f"Debug: Adjusted title for platinum edition: {modified_title}")
+    if release_range and edition == "re-release":
+        modified_title = f"{title} {release_range}"
+        print(f"Debug: Adjusted title for release range: {modified_title}")
 
     for row in platform_rows:
         title_cell = row.find("td", class_="title")
         title_link = title_cell.find("a") if title_cell else None
         row_title = title_link.get_text(" ", strip=True) if title_link else ""
+        row_title_normalized = get_simplified_text(row_title)
 
-        if get_simplified_text(row_title) == title:
+        if row_title_normalized == modified_title:
             platform_row = row
             break
-        elif get_simplified_text(row_title) == modified_title:
+
+        if not release_range and row_title_normalized == title:
             platform_row = row
             break
 
@@ -2271,7 +2299,7 @@ def scrape_upc(soup):
     return upc   
 
 def search_game(query):
-    global active_game_data, active_taxonomy, active_contexts, active_title, active_perspective, active_game_is_new, active_source_taxonomy
+    global active_game_data, active_taxonomy, active_contexts, active_title, active_perspective, active_game_is_new, active_source_taxonomy, active_source_game_data
     active_game_data = {}
     active_taxonomy = {}
     active_contexts = {}
@@ -2317,14 +2345,17 @@ def search_game(query):
     active_game_data["developer"] = match.get("developer", "")
     active_game_data["release_date"] = match.get("release_date", "")
     active_game_data["publisher"] = match.get("publisher", "")
+    active_game_data["moby_score"] = match.get("moby_score", "")
+    active_game_data["age_rating"] = match.get("age_rating", "")
     active_game_data["url"] = match.get("url", "")
+    active_game_data["price_url"] = ""
 
     for taxonomy_key in get_taxonomy_keys():
         value = match.get(taxonomy_key, "")
         active_taxonomy[taxonomy_key] = value
         active_source_taxonomy[taxonomy_key] = value
 
-    active_source_game_data = {key: match.get(key, "") for key in active_game_data.keys()}
+    active_source_game_data = get_source_record(match)
 
     # Get the context data from the match or use the default values if not found
     for context in get_all_contexts():
@@ -2341,8 +2372,8 @@ def search_game(query):
     #active_physical_data['price'] = scrape_prices(url)
     active_contexts["upc"] = match.get("upc", "")
     active_contexts["price"], item_link = scrape_pricecharting_price(query)
-    active_game_data["price_url"] = item_link or ''
     if item_link:
+        active_game_data["price_url"] = item_link
         print(f"Debug: Got link scraping {item_link}")
         pc_soup = get_soup(item_link)
         upc = scrape_upc(pc_soup) if not is_upc(query) else ""
@@ -2367,18 +2398,29 @@ def selections_update(name, value):
     if name == "platforms":
         settings_set_defaults(value)
 
+        release_selection = active_selections.get("release_range")
+        release_options = get_release_ranges()
+
+        if release_selection is not None:
+            if not release_options:
+                release_selection.set(0)
+            elif release_selection.get() >= len(release_options):
+                release_selection.set(0)
+
+        rebuild_context_choices()
+
     if active_settings is None:
         return
     
     old_condition = str(active_contexts.get("condition") or "").casefold()
     old_content = str(active_contexts.get("content") or "").casefold()
 
-    for setting in active_contexts.keys():
-        setting_plural = (setting + "s") if not setting.endswith("s") else setting
-        options = get_context_options(setting_plural)
+    for setting in active_contexts.keys():   
+        options_key = "release_range" if setting == "release_range" else setting if setting.endswith("s") else setting + "s"
+        options = get_context_options(options_key)
         if not options:
             continue
-        active_contexts[setting] = options[active_selections.get(setting_plural, tk.IntVar()).get()]
+        active_contexts[setting] = options[active_selections.get(options_key, tk.IntVar()).get()]
 
     # Refetch the price if the condition or content has changed in a way that affects the price
     if name in ("conditions", "contents"):
@@ -2393,6 +2435,9 @@ def selections_update(name, value):
         if price is not None:
             active_contexts["price"] = price
             print(f"Debug: Re-fetched price for UPC {active_contexts.get('upc') or active_game_data.get('title', [None])[0]}: {price}")
+
+    if name == "editions":
+        rebuild_context_choices()
 
     update_info_frame()
 
@@ -2631,31 +2676,66 @@ def update_info_frame():
             add_id_btn.grid(row=0, column=1, sticky="nsew")
             add_id_btn.configure(padding=(0, 0))
             missing_fields[key] = add_id_btn
-        elif key and not value:
-            var = tk.StringVar(value="")
-            entry = ttk.Entry(infoframe, textvariable=var)
-            entry.grid(row=row, column=1, sticky="nsew")
-            missing_fields[key] = entry
+        elif key.casefold() == "price_url" and value == "" and active_game_data.get("title", "") != "":
+            url_frame = ttk.Frame(infoframe)
+            url_frame.grid(row=row, column=1, sticky="nsew", padx=0, pady=0)
+            url_frame.columnconfigure(0, weight=1)
+            url_frame.columnconfigure(1, weight=0)
+            search_title = get_simplified_text(active_game_data.get("title", ""))
+            release_range = get_release_range()
 
-            def _on_submit_game(event=None, k=key, v=var):
-                v.set(v.get().strip())
-                update_info_choice(k, v)
-                if k.lower() == "title" and acceptbutton is not None and declinebutton is not None:
-                    state = "normal" if v.get().strip() else "disabled"
-                    acceptbutton.config(state=state)
-                    declinebutton.config(state=state)
-
-            entry.bind("<Return>", _on_submit_game)
-            entry.bind("<FocusOut>", _on_submit_game)
-            entry.bind("<Escape>", lambda e: update_info_frame())
+            if release_range:
+                search_title = f"{search_title} {release_range}"
+            fallback_url = "https://www.pricecharting.com/search-products?type=prices&q=" + str(search_title).replace(" ", "%20")
+            value_label = tk.Label(url_frame, text=handle_ellipsis("Search PriceCharting"), fg="#0563C1", cursor="hand2", anchor="w", background=(active_settings["theming"]["custom_colors"]["row_even_bg"] if row % 2 == 0 else active_settings["theming"]["custom_colors"]["row_odd_bg"]),)
+            value_label.bind("<Button-1>", lambda event, url=fallback_url: handle_url(event, url),)
+            value_label.grid(row=0, column=0, sticky="nsew", padx=(0, 4), pady=0)
+            Tooltip(value_label, text=fallback_url)
+            add_price_url_btn = ttk.Button(url_frame, text="Add URL", command=lambda k=key: add_url(k))
+            add_price_url_btn.grid(row=0, column=1, sticky="nsew")
+            add_price_url_btn.configure(padding=(0, 0))
+            missing_fields[key] = add_price_url_btn
         elif key.casefold() == "url" and value or key.casefold() == "price_url" and value:
             #value_label = tk.Label(infoframe, text=handle_ellipsis(f"See on MobyGames ({value.split('/')[-1]})"), fg="#0563C1", cursor="hand2", anchor="w", background=(active_settings["theming"]["custom_colors"]["row_even_bg"] if row % 2 == 0 else active_settings["theming"]["custom_colors"]["row_odd_bg"]),)
             value_label = tk.Label(infoframe, text=handle_ellipsis(f"{value}"), fg="#0563C1", cursor="hand2", anchor="w", background=(active_settings["theming"]["custom_colors"]["row_even_bg"] if row % 2 == 0 else active_settings["theming"]["custom_colors"]["row_odd_bg"]),)
             value_label.bind("<Button-1>", lambda event, url=str(value): handle_url(event, url),)
             value_label.grid(row=row, column=1, sticky="nsew")
             Tooltip(value_label, text=str(value))
+        elif key:
+            modified = is_source_game_data_changed(key)
+            value_frame = ttk.Frame(infoframe)
+            value_frame.grid(row=row, column=1, sticky="nsew")
+            value_frame.columnconfigure(0, weight=1)
+            value_frame.configure(style="ModifiedInfoData.TFrame" if modified else "InfoData.TFrame")
+            value_style = (f"ModifiedInfoData{'Even' if row % 2 == 0 else 'Odd'}.TLabel" if modified else f"InfoData{'Even' if row % 2 == 0 else 'Odd'}.TLabel")
+            if not value:
+                var = tk.StringVar(value="")
+                entry = ttk.Entry(value_frame, textvariable=var)
+                entry.grid(row=0, column=0, sticky="nsew")
+                missing_fields[key] = entry
+    
+                def _on_submit_game(event=None, k=key, v=var):
+                    v.set(v.get().strip())
+                    update_info_choice(k, v)
+                    if k.lower() == "title" and acceptbutton is not None and declinebutton is not None:
+                        state = "normal" if v.get().strip() else "disabled"
+                        acceptbutton.config(state=state)
+                        declinebutton.config(state=state)
+    
+                entry.bind("<Return>", _on_submit_game)
+                entry.bind("<FocusOut>", _on_submit_game)
+                entry.bind("<Escape>", lambda e: update_info_frame())
+            else:
+                normal_background = (active_settings["theming"]["custom_colors"]["row_even_bg"] if row % 2 == 0 else active_settings["theming"]["custom_colors"]["row_odd_bg"])
+                modified_background = (get_color("taxonomy_modified", "#FFCC66") if modified else normal_background)
+                value_label = tk.Label(value_frame, text=handle_ellipsis(str(value)), anchor="w",background=modified_background)
+                value_label.grid(row=0, column=0, sticky="nsew")
+
+                edit_button = ttk.Button(value_frame, text="Edit", command=lambda p=value_frame, k=key: edit_data(p, k))
+                edit_button.grid(row=0, column=1, sticky="nsew")
+                edit_button.configure(padding=(0, 0))
         else:
-            value_label = ttk.Label(infoframe, text=handle_ellipsis(str(value)), style=f"InfoData{'Even' if row % 2 == 0 else 'Odd'}.TLabel")
+            value_label = ttk.Label(infoframe, text="", style=f"InfoData{'Even' if row % 2 == 0 else 'Odd'}.TLabel")
             value_label.grid(row=row, column=1, sticky="nsew")
 
     # Update the info frame with the current taxonomy data
@@ -2731,6 +2811,11 @@ def update_info_frame():
             add_upc_button = ttk.Button(upc_frame, text="Add UPC", command=add_upc)
             add_upc_button.grid(row=0, column=1, sticky="nsew")
             add_upc_button.configure(padding=(0, 0))
+        elif key.casefold() == "release_range":
+            value_label = ttk.Label(infoframe, text=handle_ellipsis(str(value)), style=f"InfoData{'Even' if row % 2 == 0 else 'Odd'}.TLabel")
+            value_label.grid(row=row, column=5, sticky="nsew")
+            if str(value_label).endswith("..."):
+                Tooltip(value_label, text=str(value))
         elif key and not value:
             var = tk.StringVar(value="")
             entry = ttk.Entry(infoframe, textvariable=var)
@@ -2747,6 +2832,8 @@ def update_info_frame():
         else:
             value_label = ttk.Label(infoframe, text=handle_ellipsis(f"{value}"), style=f"InfoData{'Even' if row % 2 == 0 else 'Odd'}.TLabel")
             value_label.grid(row=row, column=5, sticky="nsew")
+            if str(value_label).endswith("..."):
+                Tooltip(value_label, text=str(value))
 
     cols, rows = infoframe.grid_size()
     for col in range(cols):
@@ -2761,7 +2848,8 @@ def update_source_record():
         handle_error("No game data available.")
         return False
 
-    title = handle_normalized_text(active_game_data.get("title", ""))
+    source_title = active_source_game_data.get("title", active_game_data.get("title", ""))
+    title = handle_normalized_text(source_title)
     platform = get_platform_name()
     source_file = Path(f"{BASE_DIR}/Data/{platform}.xlsx")
 
@@ -2777,16 +2865,12 @@ def update_source_record():
         existing_added = existing_row["added"].iloc[0]
         existing_modified = existing_row["modified"].iloc[0] if "modified" in existing_row else None
 
-        record = {
-            "title": active_game_data.get("title", ""),
-            "release_date": active_game_data.get("release_date", ""),
-            "publisher": active_game_data.get("publisher", ""),
-            "developer": active_game_data.get("developer", ""),
-            "url": active_game_data.get("url", ""),
+        record = get_source_record()
+        record.update({
             "platform": platform,
             "upc": active_contexts.get("upc", ""),
             "added": existing_added,
-        }
+        })
 
         for key in get_taxonomy_keys():
             record[key] = active_taxonomy.get(key, "")
@@ -2813,19 +2897,25 @@ def update_source_record():
         handle_error(f"Error updating source data: {exc}")
         return False
 
-def update_thumbnail():
-    global thumbnail_label, thumbnail_image, thumbnail_tooltip
+def update_thumbnail(image_path=None):
+    global thumbnail_label, thumbnail_image, thumbnail_tooltip, thumbnail_refresh_btn
 
     if thumbnail_label is None:
         return
+
+    if thumbnail_refresh_btn is not None:
+        has_moby_url = bool(active_game_data.get("url", ""))
+        has_price_url = bool(active_game_data.get("price_url", ""))
+        thumbnail_refresh_btn.configure(state="normal" if has_moby_url and has_price_url else "disabled")
 
     thumbnail_size = (180, 240)
 
     # Always create a transparent canvas so the thumbnail area keeps its size.
     canvas = Image.new("RGBA", thumbnail_size, (0, 0, 0, 0))
 
-    url = active_game_data.get("url", "")
-    image_path = get_thumbnail_path(url)
+    if image_path is None:
+        url = active_game_data.get("url", "")
+        image_path = get_thumbnail_path(url)
 
     if image_path is not None:
         cover = Image.open(image_path).convert("RGBA")
@@ -2929,7 +3019,7 @@ def write_to_file(data, platform):
 
 def main():
     global infoframe, searchentry, logframe, logtree, acceptbutton, declinebutton, contextlist
-    global app_root, thumbnail_label, thumbnail_image, thumbnail_tooltip
+    global app_root, thumbnail_label, thumbnail_image, thumbnail_tooltip, thumbnail_refresh_btn, contextframe
     if active_settings is None:
         handle_error("No settings available.")
         return
@@ -2952,6 +3042,8 @@ def main():
     modified_color = get_color("taxonomy_modified", "#FFCC66")
     normal_color = "#e0e0e0"
 
+    style.configure("ModifiedInfoDataEven.TLabel", background=modified_color, foreground="#000000")
+    style.configure("ModifiedInfoDataOdd.TLabel", background=modified_color, foreground="#000000")
     style.configure("ModifiedTaxonomy.TMenubutton", background=modified_color, foreground="#000000", lightcolor=modify_color(modified_color, 0.2), darkcolor=modify_color(modified_color, -0.1), bordercolor=modify_color(modified_color, -0.2))
     style.map("ModifiedTaxonomy.TMenubutton", background=[("active", modified_color), ("pressed", modified_color), ("!disabled", modified_color)])
 
@@ -2984,18 +3076,21 @@ def main():
     thumbnail_frame.grid(row=0, column=0, sticky="nsew")
     thumbnail_frame.columnconfigure(0, weight=1)
     thumbnail_frame.rowconfigure(0, weight=1)
+    thumbnail_frame.rowconfigure(1, weight=0)
 
     thumbnail_label = tk.Label(thumbnail_frame, text="")
     thumbnail_label.grid(row=0, column=0, sticky="nsew")
     thumbnail_tooltip = Tooltip(thumbnail_label, text="Game cover will appear here if available.")
+
+    thumbnail_refresh_btn = ttk.Button(thumbnail_frame, text="Refresh", command=lambda: handle_thumbnail_refresh(), state="disabled")
+    thumbnail_refresh_btn.grid(row=1, column=0, sticky="nsew")
 
     infoframe = ttk.LabelFrame(info_container, text="Info", padding="2", relief=tk.SUNKEN)
     infoframe.grid(row=0, column=1, sticky="nsew")
     frames_padded.append(infoframe)
     mainrow += 1
 
-    for key, frame in contextlist:
-        populate_context_choices(frame, key)
+    rebuild_context_choices()
     update_info_frame()
 
     logframe = ttk.LabelFrame(mainframe, text="Log", padding="2")
@@ -3166,7 +3261,8 @@ def main():
     root.bind_all('<Delete>', lambda event: handle_decline_key(root, event))
     root.bind_all('<Control-q>', lambda event: root.quit())
     root.bind_all('<Insert>', handle_missing_upc_shortcut)
-    root.bind_all('<Page_Up>', handle_missing_moby_id_shortcut)
+    root.bind_all('<Page_Up>', handle_missing_id_shortcut)
+    root.bind_all('<Page_Down>', handle_missing_price_url_shortcut)
     root.bind('<Tab>', lambda event: handle_tab_key(root, event, 1))
     root.bind('<Shift-Tab>', lambda event: handle_tab_key(root, event, -1))
     root.bind('<ISO_Left_Tab>', lambda event: handle_tab_key(root, event, -1))
