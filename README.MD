@@ -1,8 +1,10 @@
 # Game Barcode Scanner
 
-A simple TKinter python program made to save time by scraping information about a title and creating a CSV or XLS file with the information, or to output to the clipboard, where the order and content is customizable.
+A TKinter python program made to save time by scraping information about a title and creating a CSV or XLS file with the information, or to output to the clipboard, where the order and content is customizable.
 
-Was mainly meant to work with a barcode scanner, but text search is also possible.
+Was mainly meant to work with a barcode scanner, but text search is more useful at the moment.
+
+Since mobygames disallowed scraping, it now uses its own internal databases to fill in information (private until I've had a chance to fix the most glaring issues in them) instead of scraping it, but still scrapes prices and cover images from pricecharting. Uses its own taxonomy system, which is customizable.
 
 # Requirements
 
@@ -25,15 +27,3 @@ Run the following command in your terminal:
 # TODO
 
 - [ ] Make it less janky
-- [x] Add setting for which Y/N symbol to use
-- [x] Add ability to re-order the column order from the setup tab
-- [x] Add ability to exclude columns per platform on setup tab
-- [x] Add a setup tab to tweak settings file
-- [x] Add ability to set defaults per platform
-- [ ] Add ability to set rules per context
-- [x] Add all context to listview
-- [ ] Make recall respect current columns
-- [ ] Add payed context
-- [x] Add ability to define custom contexts
-- [ ] Add ability to add unknown game
-- [x] Add ability to quickly add missing fields
