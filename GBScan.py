@@ -76,13 +76,12 @@ def add_id(key):
         update_thumbnail(thumbnail_path)
         return
 
-    if update_source_record():
-        missing_fields.pop(key, None)
-        update_info_frame()
-        update_thumbnail(thumbnail_path)
+    missing_fields.pop(key, None)
+    update_info_frame()
+    update_thumbnail(thumbnail_path)
 
 def add_upc():
-    if not active_contexts:
+    if not active_game_data:
         return
 
     new_upc = simpledialog.askstring("Add UPC", "Enter a 12- or 13-digit UPC:")
@@ -94,19 +93,13 @@ def add_upc():
         handle_error("UPC must contain exactly 12 or 13 digits.")
         return
 
-    existing_upcs = [value.strip() for value in str(active_contexts.get("upc", "")).split(",") if value.strip()]
+    existing_upcs = [value.strip() for value in str(active_game_data.get("upc", "")).split(",") if value.strip()]
 
     if new_upc not in existing_upcs:
         existing_upcs.append(new_upc)
+        print(f"Debug: Added new UPC '{new_upc}'. There's now {len(existing_upcs)} UPCs.")
 
-    updated_upc = ", ".join(existing_upcs)
-    previous_upc = active_contexts.get("upc", "")
-    active_contexts["upc"] = updated_upc
-
-    # If the game is new, we don't need to update the source record until the game is accepted
-    if not active_game_is_new and not update_source_record():
-        active_contexts["upc"] = previous_upc
-        return
+    active_game_data["upc"] = ", ".join(existing_upcs)
     update_info_frame()
 
 def add_url(key):
@@ -127,7 +120,7 @@ def add_url(key):
 
     # Scrape for the price if we don't already have one
     if not active_contexts.get("price"):
-        price, _ = scrape_pricecharting_price(active_contexts.get("upc") or active_game_data.get("title", ""), known_url=new_url)
+        price, _ = scrape_pricecharting_price(active_game_data.get("upc") or active_game_data.get("title", ""), known_url=new_url)
         if price is not None:
             active_contexts["price"] = price
 
@@ -139,10 +132,8 @@ def add_url(key):
         return
 
     active_game_data[key] = new_url
-    if update_source_record():
-        missing_fields.pop(key, None)
-        update_info_frame()
-
+    missing_fields.pop(key, None)
+    update_info_frame()
     handle_thumbnail_missing()
 
 def append_new_source_record():
@@ -165,8 +156,6 @@ def append_new_source_record():
     for key in get_all_contexts():
         source_key = key[:-1] if key.endswith("s") else key
         record[source_key] = active_contexts.get(key, "")
-
-    record["upc"] = active_contexts.get("upc", "")
 
     source_data = pd.read_excel(source_file, engine="openpyxl", dtype=str).fillna("")
     source_data.columns = handle_normalized_cols(source_data.columns)
@@ -237,7 +226,7 @@ def clear_infoframe():
         active_contexts = {}
         for k in get_all_contexts():
             active_contexts[k] = get_context_data(k)
-        for ctx in ("payed", "price", "upc"):
+        for ctx in ("payed", "price"):
             active_contexts[ctx] = ""
 
         active_title = None
@@ -330,7 +319,25 @@ def edit_data(parent, key):
     entry.grid(row=0, column=0, sticky="nsew")
 
     def save_value(event=None):
-        active_game_data[key] = value_var.get().strip()
+        new_value = value_var.get().strip()
+        active_game_data[key] = new_value
+
+        if key.casefold() == "price_url":
+            if new_value:
+                query = (active_game_data.get("upc") or active_game_data.get("title", ""))
+                price, _ = scrape_pricecharting_price(query, known_url=new_value)
+
+                if price is not None:
+                    active_contexts["price"] = price
+
+                price_soup = get_soup(new_value)
+                image_path = scrape_pricecharting_img(price_soup, force=True)
+
+                if image_path is not None:
+                    update_thumbnail(image_path)
+            else:
+                active_contexts["price"] = ""
+        
         update_info_frame()
         return "break"
 
@@ -462,7 +469,7 @@ def game_accept():
         "Genre": active_taxonomy.get('genre') if active_taxonomy.get('genre') else "",
         "Added": [get_timestamp()],
         "Modified": [get_timestamp() if not active_game_is_new else ""],
-        "UPC": [active_contexts.get('upc')] if active_contexts.get('upc') else "",
+        "UPC": [active_game_data.get('upc')] if active_game_data.get('upc') else "",
         "URL": [active_game_data.get('url')] if active_game_data.get('url') else "",
         "Price URL": [active_game_data.get('price_url')] if active_game_data.get('price_url') else ""
     }
@@ -724,6 +731,13 @@ def get_game_source_data(query):
     if not matches.empty:
         found_method['title'] = True
 
+    # If the game begins with "The ", check for matches that end with ", The"
+    if matches.empty and normalized_query.startswith("the "):
+        matches = source_data[source_data["title"].str.lower() == normalized_query[4:] + ", the"]
+
+    if not matches.empty:
+        found_method['title_the'] = True
+
     if matches.empty:
         normalized_query = get_simplified_text(query)
         matches = source_data[source_data["title"].map(get_simplified_text) == normalized_query]
@@ -736,6 +750,12 @@ def get_game_source_data(query):
 
     if not matches.empty:
         found_method['title_endswith'] = True
+
+    if matches.empty:
+        matches = source_data[source_data["title"].map(get_simplified_text).str.startswith(normalized_query)]
+
+    if not matches.empty:
+        found_method['title_startswith'] = True
 
     if matches.empty:
         return None
@@ -845,9 +865,13 @@ def get_response(url, timeout=100, **kwargs):
 
 def get_simplified_text(text):
     text = handle_normalized_text(text)
-    symbols = [":", "'", "-", ".", ",", "(", ")", "[", "]"]
+    symbols = [":", "!", "-", ".", "•", ",", "(", ")", "[", "]"]
     for symbol in symbols:
+        text = text.replace(symbol, " ")
+    non_separating_symbols = ["'"]
+    for symbol in non_separating_symbols:
         text = text.replace(symbol, "")
+    text = text.replace("&", "and")
     # Get rid of extra spaces between words
     text = " ".join(text.split())
     return text
@@ -1023,7 +1047,7 @@ def handle_missing_upc_shortcut(event=None):
         upc_button.invoke()
         return "break"
 
-    if "upc" in active_contexts:
+    if "upc" in active_game_data:
         add_upc()
         return "break"
     
@@ -1152,7 +1176,7 @@ def handle_thumbnail_rename(url):
     if not platform or not id:
         return title_image_path
 
-    image_dir = Path(f"{BASE_DIR} / Data / Images / {platform}")
+    image_dir = Path(f"{BASE_DIR}/Data/Images/{platform}")
     moby_image_path = image_dir / f"{id}.png"
 
     if moby_image_path.exists():
@@ -1208,6 +1232,7 @@ def is_source_game_data_changed(key = None):
         if key not in source_keys:
             return False
         return str(active_game_data.get(key, "")) != str(active_source_game_data.get(key, ""))
+    
     return any(str(active_game_data.get(source_key, "")) != str(active_source_game_data.get(source_key, "")) for source_key in source_keys)
 
 def is_source_taxonomy_changed(key = None):
@@ -2326,8 +2351,8 @@ def search_game(query):
         active_game_data["developer"] = ""
         active_game_data["release_date"] = ""
         active_game_data["url"] = ""
+        active_game_data["upc"] = query if is_upc(query) else ""
 
-        active_contexts["upc"] = query if is_upc(query) else ""
         active_contexts["payed"] = ""
         active_contexts["price"] = ""
 
@@ -2347,6 +2372,7 @@ def search_game(query):
     active_game_data["publisher"] = match.get("publisher", "")
     active_game_data["moby_score"] = match.get("moby_score", "")
     active_game_data["age_rating"] = match.get("age_rating", "")
+    active_game_data["upc"] = match.get("upc", "")
     active_game_data["url"] = match.get("url", "")
     active_game_data["price_url"] = ""
 
@@ -2369,18 +2395,16 @@ def search_game(query):
                 active_selections[context].set(idx)
         print(f"Debug: Context '{context_singular}': {active_contexts[context]}")
 
-    #active_physical_data['price'] = scrape_prices(url)
-    active_contexts["upc"] = match.get("upc", "")
     active_contexts["price"], item_link = scrape_pricecharting_price(query)
     if item_link:
         active_game_data["price_url"] = item_link
         print(f"Debug: Got link scraping {item_link}")
         pc_soup = get_soup(item_link)
         upc = scrape_upc(pc_soup) if not is_upc(query) else ""
-        active_contexts["upc"] = upc if upc else active_contexts.get("upc", "")
+        active_game_data["upc"] = upc if upc else active_game_data.get("upc", "")
         cover_img_path = scrape_pricecharting_img(pc_soup)
     else:
-        active_contexts.setdefault('upc', '')
+        active_game_data.setdefault('upc', '')
         print("Debug: No UPC found from search query or item page.")
     active_contexts["payed"] = ""
     
@@ -2412,8 +2436,8 @@ def selections_update(name, value):
     if active_settings is None:
         return
     
-    old_condition = str(active_contexts.get("condition") or "").casefold()
-    old_content = str(active_contexts.get("content") or "").casefold()
+    old_condition = str(active_contexts.get("conditions") or "").casefold()
+    old_content = str(active_contexts.get("contents") or "").casefold()
 
     for setting in active_contexts.keys():   
         options_key = "release_range" if setting == "release_range" else setting if setting.endswith("s") else setting + "s"
@@ -2424,17 +2448,17 @@ def selections_update(name, value):
 
     # Refetch the price if the condition or content has changed in a way that affects the price
     if name in ("conditions", "contents"):
-        new_condition = str(active_contexts.get("condition") or "").casefold()
-        new_content = str(active_contexts.get("content") or "").casefold()
+        new_condition = str(active_contexts.get("conditions") or "").casefold()
+        new_content = str(active_contexts.get("contents") or "").casefold()
         should_refetch = (name == "conditions" and (("sealed" in new_condition and "sealed" not in old_condition) or ("sealed" in old_condition and "sealed" not in new_condition))) or (name == "contents" and (("loose" in new_content and "loose" not in old_content) or ("loose" in old_content and "loose" not in new_content)))
         price = None
         if should_refetch:
             print(f"Debug: Refetching prices due to change in condition/content. Old Condition: {old_condition}, New Condition: {new_condition}, Old Content: {old_content}, New Content: {new_content}")
-            price, _ = scrape_pricecharting_price(active_contexts.get("upc") or active_game_data.get("title", [None])[0])
+            price, _ = scrape_pricecharting_price(active_game_data.get("upc") or active_game_data.get("title", ""))
 
         if price is not None:
             active_contexts["price"] = price
-            print(f"Debug: Re-fetched price for UPC {active_contexts.get('upc') or active_game_data.get('title', [None])[0]}: {price}")
+            print(f"Debug: Re-fetched price for UPC {active_game_data.get('upc') or active_game_data.get('title', '')}: {price}")
 
     if name == "editions":
         rebuild_context_choices()
@@ -2657,10 +2681,17 @@ def update_info_frame():
     # Update the info frame with the current game data
     for i in range(max_rows):
         key, value = active_game_items[i] if i < len(active_game_items) else ("", "")
+        display_value = handle_ellipsis(str(value)) if value else ""
         row = i + active_game_data_offset
         suffix = ":" if key else ""
         data_label = ttk.Label(infoframe, text=handle_ellipsis(handle_single_option(f"{key.capitalize()}{suffix}")), style=f"InfoData{'Even' if row % 2 == 0 else 'Odd'}.TLabel")
         data_label.grid(row=row, column=0, sticky="nsew")
+
+        # Determine the background color based on whether the source game data has changed
+        modified = is_source_game_data_changed(key)
+        row_style = (f"ModifiedInfoData{'Even' if row % 2 == 0 else 'Odd'}.TLabel" if modified else f"InfoData{'Even' if row % 2 == 0 else 'Odd'}.TLabel")
+        normal_background = (active_settings["theming"]["custom_colors"]["row_even_bg"] if row % 2 == 0 else active_settings["theming"]["custom_colors"]["row_odd_bg"])
+        modified_background = (get_color("taxonomy_modified", "#FFCC66") if modified else normal_background)
 
         if key.casefold() == "url" and value == "" and active_game_data.get("title", "") != "":
             url_frame = ttk.Frame(infoframe)
@@ -2696,13 +2727,34 @@ def update_info_frame():
             add_price_url_btn.configure(padding=(0, 0))
             missing_fields[key] = add_price_url_btn
         elif key.casefold() == "url" and value or key.casefold() == "price_url" and value:
-            #value_label = tk.Label(infoframe, text=handle_ellipsis(f"See on MobyGames ({value.split('/')[-1]})"), fg="#0563C1", cursor="hand2", anchor="w", background=(active_settings["theming"]["custom_colors"]["row_even_bg"] if row % 2 == 0 else active_settings["theming"]["custom_colors"]["row_odd_bg"]),)
-            value_label = tk.Label(infoframe, text=handle_ellipsis(f"{value}"), fg="#0563C1", cursor="hand2", anchor="w", background=(active_settings["theming"]["custom_colors"]["row_even_bg"] if row % 2 == 0 else active_settings["theming"]["custom_colors"]["row_odd_bg"]),)
+            value_frame = ttk.Frame(infoframe)
+            value_frame.grid(row=row, column=1, sticky="nsew")
+            value_frame.columnconfigure(0, weight=1)
+            
+            value_label = tk.Label(value_frame, text=handle_ellipsis(f"{value}"), fg="#0563C1", cursor="hand2", anchor="w", background=(active_settings["theming"]["custom_colors"]["row_even_bg"] if row % 2 == 0 else active_settings["theming"]["custom_colors"]["row_odd_bg"]),)
             value_label.bind("<Button-1>", lambda event, url=str(value): handle_url(event, url),)
-            value_label.grid(row=row, column=1, sticky="nsew")
-            Tooltip(value_label, text=str(value))
+            value_label.grid(row=0, column=0, sticky="nsew")
+            if display_value.endswith("..."):
+                Tooltip(value_label, text=str(value))
+
+            edit_button = ttk.Button(value_frame, text="Edit", command=lambda p=value_frame, k=key: edit_data(p, k))
+            edit_button.grid(row=0, column=1, sticky="nsew")
+            edit_button.configure(padding=(0, 0))
+
+        elif key.casefold() == "upc":
+            upc_frame = ttk.Frame(infoframe)
+            upc_frame.grid(row=row, column=1, sticky="nsew")
+            upc_frame.columnconfigure(0, weight=1)
+
+            value_label = ttk.Label(upc_frame, text=display_value, style=row_style)
+            value_label.grid(row=0, column=0, sticky="nsew")
+            if display_value.endswith("..."):
+                Tooltip(value_label, text=str(value))
+
+            add_upc_button = ttk.Button(upc_frame, text="Add UPC", command=add_upc)
+            add_upc_button.grid(row=0, column=1, sticky="nsew")
+            add_upc_button.configure(padding=(0, 0))
         elif key:
-            modified = is_source_game_data_changed(key)
             value_frame = ttk.Frame(infoframe)
             value_frame.grid(row=row, column=1, sticky="nsew")
             value_frame.columnconfigure(0, weight=1)
@@ -2717,26 +2769,30 @@ def update_info_frame():
                 def _on_submit_game(event=None, k=key, v=var):
                     v.set(v.get().strip())
                     update_info_choice(k, v)
+                    update_info_frame()
                     if k.lower() == "title" and acceptbutton is not None and declinebutton is not None:
                         state = "normal" if v.get().strip() else "disabled"
                         acceptbutton.config(state=state)
                         declinebutton.config(state=state)
+                    if event is not None and event.keysym == "Return":
+                        return "break"
     
                 entry.bind("<Return>", _on_submit_game)
                 entry.bind("<FocusOut>", _on_submit_game)
                 entry.bind("<Escape>", lambda e: update_info_frame())
             else:
-                normal_background = (active_settings["theming"]["custom_colors"]["row_even_bg"] if row % 2 == 0 else active_settings["theming"]["custom_colors"]["row_odd_bg"])
-                modified_background = (get_color("taxonomy_modified", "#FFCC66") if modified else normal_background)
-                value_label = tk.Label(value_frame, text=handle_ellipsis(str(value)), anchor="w",background=modified_background)
+                value_label = ttk.Label(value_frame, text=display_value, style=row_style)
                 value_label.grid(row=0, column=0, sticky="nsew")
 
                 edit_button = ttk.Button(value_frame, text="Edit", command=lambda p=value_frame, k=key: edit_data(p, k))
                 edit_button.grid(row=0, column=1, sticky="nsew")
                 edit_button.configure(padding=(0, 0))
+                if display_value.endswith("..."):
+                    Tooltip(value_label, text=str(value))
         else:
             value_label = ttk.Label(infoframe, text="", style=f"InfoData{'Even' if row % 2 == 0 else 'Odd'}.TLabel")
             value_label.grid(row=row, column=1, sticky="nsew")
+
 
     # Update the info frame with the current taxonomy data
     for j in range(max_rows):
@@ -2796,25 +2852,15 @@ def update_info_frame():
     # Update the info frame with the current physical data
     for k in range(max_rows):
         key, value = active_physical_items[k] if k < len(active_physical_items) else ("", "")
+        display_value = handle_ellipsis(str(value)) if value else ""
         row = k + active_physical_data_offset
         suffix = ":" if key else ""
         data_label = ttk.Label(infoframe, text=handle_ellipsis(f"{key.capitalize()}{suffix}"), style=f"InfoData{'Even' if row % 2 == 0 else 'Odd'}.TLabel")
         data_label.grid(row=row, column=4, sticky="nsew")
-        if key.casefold() == "upc":
-            upc_frame = ttk.Frame(infoframe)
-            upc_frame.grid(row=row, column=5, sticky="nsew")
-            upc_frame.columnconfigure(0, weight=1)
-
-            value_label = ttk.Label(upc_frame, text=handle_ellipsis(str(value)) if value else "", style=f"InfoData{'Even' if row % 2 == 0 else 'Odd'}.TLabel")
-            value_label.grid(row=0, column=0, sticky="nsew")
-
-            add_upc_button = ttk.Button(upc_frame, text="Add UPC", command=add_upc)
-            add_upc_button.grid(row=0, column=1, sticky="nsew")
-            add_upc_button.configure(padding=(0, 0))
-        elif key.casefold() == "release_range":
+        if key.casefold() == "release_range":
             value_label = ttk.Label(infoframe, text=handle_ellipsis(str(value)), style=f"InfoData{'Even' if row % 2 == 0 else 'Odd'}.TLabel")
             value_label.grid(row=row, column=5, sticky="nsew")
-            if str(value_label).endswith("..."):
+            if display_value.endswith("..."):
                 Tooltip(value_label, text=str(value))
         elif key and not value:
             var = tk.StringVar(value="")
@@ -2832,7 +2878,7 @@ def update_info_frame():
         else:
             value_label = ttk.Label(infoframe, text=handle_ellipsis(f"{value}"), style=f"InfoData{'Even' if row % 2 == 0 else 'Odd'}.TLabel")
             value_label.grid(row=row, column=5, sticky="nsew")
-            if str(value_label).endswith("..."):
+            if display_value.endswith("..."):
                 Tooltip(value_label, text=str(value))
 
     cols, rows = infoframe.grid_size()
@@ -2868,7 +2914,6 @@ def update_source_record():
         record = get_source_record()
         record.update({
             "platform": platform,
-            "upc": active_contexts.get("upc", ""),
             "added": existing_added,
         })
 

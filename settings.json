@@ -88,6 +88,9 @@
         ],
         "Switch": [
             "Nintendo Selects"
+        ],
+        "3DS": [
+            "Nintendo Selects"
         ]
     },
     "custom_context": {},
@@ -196,6 +199,7 @@
             "Arctic",
             "Base",
             "Cemetary",
+            "Court Room",
             "Desert",
             "Dungeon",
             "Expansive",
@@ -212,9 +216,11 @@
             "Space",
             "Stadium",
             "Suburban",
+            "Summer",
             "Tabletop",
             "Toy",
-            "Urban"
+            "Urban",
+            "Winter"
         ],
         "theme": [
             "Alien Invasion",
@@ -272,6 +278,7 @@
             "Beat 'Em Up",
             "Biking",
             "Bowling",
+            "Building",
             "Bullet Hell",
             "Card",
             "City Builder",
@@ -476,15 +483,16 @@
             "case_conditions": 0,
             "contents": 1,
             "editions": 0,
-            "gameplay": 17,
-            "objective": 1,
-            "theme": 4,
-            "era": 12,
+            "gameplay": 25,
+            "objective": 11,
+            "theme": 7,
+            "era": 14,
             "progression": 3,
             "dimension": 3,
             "style": 3,
             "setting": 5,
-            "tone": 8
+            "tone": 6,
+            "perspective": 1
         },
         "DS": {
             "formats": 6,
@@ -612,6 +620,7 @@
         "publisher": "",
         "moby_score": 0,
         "age_rating": "",
+        "upc": "",
         "url": "",
         "price_url": ""
     },
