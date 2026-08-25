@@ -17,6 +17,10 @@ from tkinter import ttk
 from tkinter import messagebox, simpledialog
 from tooltip import Tooltip
 
+from openpyxl import load_workbook
+from openpyxl.styles import PatternFill
+from openpyxl.utils import get_column_letter
+
 import sys
 BASE_DIR = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else os.path.dirname(__file__)
 
@@ -137,6 +141,10 @@ def add_url(key):
     handle_thumbnail_missing()
 
 def append_new_source_record():
+    if active_settings is None:
+        handle_error("No settings available.")
+        return
+
     platform = get_platform_name()
     source_file = Path(BASE_DIR) / "Data" / f"{platform}.xlsx"
     diff_dir = Path(BASE_DIR) / "Data" / "Diff"
@@ -148,6 +156,7 @@ def append_new_source_record():
         "added": timestamp,
         "modified": "",
         "platform": get_platform_name(),
+        **get_player_mode_flags(),
     })
 
     for key in get_taxonomy_keys():
@@ -236,6 +245,31 @@ def clear_infoframe():
         update_info_frame()
         return
 
+def color_scanned_collection(file_name, sheet_name):
+    if active_settings is None:
+        return
+
+    workbook = load_workbook(file_name)
+    worksheet = workbook[sheet_name]
+
+    even_fill = PatternFill(fill_type="solid", fgColor=active_settings["theming"]["custom_colors"]["row_even_bg"].lstrip("#"),)
+    odd_fill = PatternFill(fill_type="solid", fgColor=active_settings["theming"]["custom_colors"]["row_odd_bg"].lstrip("#"),)
+    yes_fill = PatternFill(fill_type="solid", fgColor=active_settings["theming"]["custom_colors"]["yes"].lstrip("#"),)
+    no_fill = PatternFill(fill_type="solid", fgColor=active_settings["theming"]["custom_colors"]["no"].lstrip("#"),)
+
+    for row_number in range(2, worksheet.max_row + 1):
+        fill = even_fill if row_number % 2 == 0 else odd_fill
+
+        for column_number in range(1, worksheet.max_column + 1):
+            cell = worksheet.cell(row=row_number, column=column_number)
+            cell.fill = fill
+            if str(cell.value).casefold() == active_settings["symbols"]["yes"].casefold():
+                cell.fill = yes_fill
+            elif str(cell.value).casefold() == active_settings["symbols"]["no"].casefold():
+                cell.fill = no_fill
+
+    workbook.save(file_name)
+
 def context_add(frame, entries, row_idx = 0, main_contextframe=None):
     if active_settings is None:
         return
@@ -312,19 +346,19 @@ def cycle_setup(name, direction):
             searchentry.focus_set()
     return handler
 
-def edit_data(parent, key):
-    value_var = tk.StringVar(value=str(active_game_data.get(key, "")))
+def edit_data(data_dict, parent, key):
+    value_var = tk.StringVar(value=str(data_dict.get(key, "")))
 
     entry = ttk.Entry(parent, textvariable=value_var)
     entry.grid(row=0, column=0, sticky="nsew")
 
     def save_value(event=None):
         new_value = value_var.get().strip()
-        active_game_data[key] = new_value
+        data_dict[key] = new_value
 
         if key.casefold() == "price_url":
             if new_value:
-                query = (active_game_data.get("upc") or active_game_data.get("title", ""))
+                query = (data_dict.get("upc") or data_dict.get("title", ""))
                 price, _ = scrape_pricecharting_price(query, known_url=new_value)
 
                 if price is not None:
@@ -428,10 +462,7 @@ def game_accept():
 
     # Set Singleplayer, Multiplayer, and Co-op based on taxonomy if they exist
     if is_toggled('use_playercount_split'):
-        #taxonomies.pop('Player', None)  # Remove the combined 'Player' taxonomy if it exists
-        active_game_data['singleplayer'] = active_settings['symbols']['yes'] if str(active_taxonomy.get('player')).rfind('SP') != -1 else active_settings['symbols']['no']
-        active_game_data['multiplayer'] = active_settings['symbols']['yes'] if str(active_taxonomy.get('player')).rfind('MP') != -1 else active_settings['symbols']['no']
-        active_game_data['coop'] = active_settings['symbols']['yes'] if str(active_taxonomy.get('player')).rfind('Coop') != -1 else active_settings['symbols']['no']
+        active_game_data.update(get_player_mode_flags())
 
     # Prepare the data to write to the file
     data = {
@@ -465,6 +496,7 @@ def game_accept():
         "Coop": active_game_data.get('coop') if active_game_data.get('coop') is not None else "",
         "Multiplayer": active_game_data.get('multiplayer') if active_game_data.get('multiplayer') is not None else "",
         "Singleplayer": active_game_data.get('singleplayer') if active_game_data.get('singleplayer') is not None else "",
+        "Hotseat": active_game_data.get('hotseat') if active_game_data.get('hotseat') is not None else "",
         **taxonomies,
         "Genre": active_taxonomy.get('genre') if active_taxonomy.get('genre') else "",
         "Added": [get_timestamp()],
@@ -793,6 +825,23 @@ def get_os_prefix() -> str:
     os = get_platform_key()
     return active_settings.get("OS", {}).get(os, {}).get("prefix", "") if os else ""
 
+def get_player_mode_flags(player_value=None):
+    if player_value is None:
+        player_value = active_taxonomy.get("player", "")
+
+    player_modes = {mode.casefold() for mode in str(player_value or "").split("/") if mode.strip()}
+
+    symbols = active_settings.get("symbols", {}) if active_settings else {}
+    yes_symbol = symbols.get("yes", "Y")
+    no_symbol = symbols.get("no", "N")
+
+    return {
+        "singleplayer": yes_symbol if "sp" in player_modes else no_symbol,
+        "multiplayer": yes_symbol if "mp" in player_modes else no_symbol,
+        "hotseat": yes_symbol if "hotseat" in player_modes else no_symbol,
+        "coop": yes_symbol if "coop" in player_modes else no_symbol,
+    }
+
 def get_all_os_versions() -> dict:
     if active_settings is None:
         return {}
@@ -826,6 +875,16 @@ def get_platforms() -> list:
     if active_settings is None:
         return []
     return list(active_settings["platforms"].keys())
+
+def get_platform_alias():
+    if active_settings is None:
+        return None
+
+    platform_key = get_platform_key()
+    platform_name = get_platform_name()
+
+    alias = active_settings.get("platform_aliases", {}).get(platform_key)
+    return alias or platform_name if platform_name else None
 
 def get_platform_name():
     if active_settings is None:
@@ -2128,13 +2187,13 @@ def scrape_pricecharting_price(query, known_url=None):
         return None, None
 
     # Get the mapped platform name from settings
-    platform_name = get_platform_name()
-    if platform_name is None:
+    platform_alias = get_platform_alias()
+    if platform_alias is None:
         return None, None
     
     # Find the row that contains the platform name
     use_pal = is_toggled("use_pal")
-    text_to_find = "pal " + platform_name.lower() if use_pal else platform_name.lower()
+    text_to_find = "pal " + platform_alias.lower() if use_pal else platform_alias.lower()
     condition = get_condition()
     sealed = condition and 'sealed' in condition.lower()
     contents = get_contents()
@@ -2191,7 +2250,7 @@ def scrape_pricecharting_price(query, known_url=None):
             break
 
     if platform_row is None:
-        print(f"Debug: No price info found for '{title}' ({platform_name}).")
+        print(f"Debug: No price info found for '{title}' ({platform_alias}).")
         return None, None
 
     # Get the link to item that matches the platform
@@ -2452,7 +2511,7 @@ def selections_update(name, value):
         new_content = str(active_contexts.get("contents") or "").casefold()
         should_refetch = (name == "conditions" and (("sealed" in new_condition and "sealed" not in old_condition) or ("sealed" in old_condition and "sealed" not in new_condition))) or (name == "contents" and (("loose" in new_content and "loose" not in old_content) or ("loose" in old_content and "loose" not in new_content)))
         price = None
-        if should_refetch:
+        if should_refetch and (active_game_data.get("title") != "" or active_game_data.get("upc") != ""):
             print(f"Debug: Refetching prices due to change in condition/content. Old Condition: {old_condition}, New Condition: {new_condition}, Old Content: {old_content}, New Content: {new_content}")
             price, _ = scrape_pricecharting_price(active_game_data.get("upc") or active_game_data.get("title", ""))
 
@@ -2512,6 +2571,8 @@ def settings_set_defaults(platform_index:int = 0):
 
         # Taxonomy
         if setting in active_settings.get("taxonomy", {}):
+            if active_taxonomy.get(setting):
+                continue  # Skip if the taxonomy field already has a value
             options = active_settings.get("taxonomy", {}).get(setting, "")
             idx = int(value) if isinstance(value, int) else 0
             idx = max(0, min(idx, len(options) - 1))  # Ensure idx is within bounds
@@ -2678,6 +2739,19 @@ def update_info_frame():
     active_game_data_offset = 0
     active_taxonomy_offset = 0
     active_physical_data_offset = 0
+
+    def _on_submit_data(event=None, k=None, v=None):
+        if v is None or k is None:
+            return
+        new_value = v.get().strip()
+        update_info_choice(k, new_value)
+        update_info_frame()
+        if k.lower() == "title" and acceptbutton is not None and declinebutton is not None:
+            state = "normal" if v.get().strip() else "disabled"
+            acceptbutton.config(state=state)
+            declinebutton.config(state=state)
+        if event is not None and event.keysym == "Return":
+            return "break"
     # Update the info frame with the current game data
     for i in range(max_rows):
         key, value = active_game_items[i] if i < len(active_game_items) else ("", "")
@@ -2737,7 +2811,7 @@ def update_info_frame():
             if display_value.endswith("..."):
                 Tooltip(value_label, text=str(value))
 
-            edit_button = ttk.Button(value_frame, text="Edit", command=lambda p=value_frame, k=key: edit_data(p, k))
+            edit_button = ttk.Button(value_frame, text="Edit", command=lambda d=active_game_data, p=value_frame, k=key: edit_data(d, p, k))
             edit_button.grid(row=0, column=1, sticky="nsew")
             edit_button.configure(padding=(0, 0))
 
@@ -2766,25 +2840,14 @@ def update_info_frame():
                 entry.grid(row=0, column=0, sticky="nsew")
                 missing_fields[key] = entry
     
-                def _on_submit_game(event=None, k=key, v=var):
-                    v.set(v.get().strip())
-                    update_info_choice(k, v)
-                    update_info_frame()
-                    if k.lower() == "title" and acceptbutton is not None and declinebutton is not None:
-                        state = "normal" if v.get().strip() else "disabled"
-                        acceptbutton.config(state=state)
-                        declinebutton.config(state=state)
-                    if event is not None and event.keysym == "Return":
-                        return "break"
-    
-                entry.bind("<Return>", _on_submit_game)
-                entry.bind("<FocusOut>", _on_submit_game)
+                entry.bind("<Return>", lambda e, value_key=key, value_var=var: _on_submit_data(event=e, k=value_key, v=value_var))
+                entry.bind("<FocusOut>", lambda e, value_key=key, value_var=var: _on_submit_data(event=e, k=value_key, v=value_var))
                 entry.bind("<Escape>", lambda e: update_info_frame())
             else:
                 value_label = ttk.Label(value_frame, text=display_value, style=row_style)
                 value_label.grid(row=0, column=0, sticky="nsew")
 
-                edit_button = ttk.Button(value_frame, text="Edit", command=lambda p=value_frame, k=key: edit_data(p, k))
+                edit_button = ttk.Button(value_frame, text="Edit", command=lambda d=active_game_data, p=value_frame, k=key: edit_data(d, p, k))
                 edit_button.grid(row=0, column=1, sticky="nsew")
                 edit_button.configure(padding=(0, 0))
                 if display_value.endswith("..."):
@@ -2809,10 +2872,9 @@ def update_info_frame():
 
             # initial selection preference: explicit value > platform default > first option > empty
             
-            initial = value if value and value in options else (platform_default if platform_default in options else (options[0] if options else ""))
+            initial = value if value else (platform_default if platform_default in options else options[0] if options else "")
 
             var = tk.StringVar(value=initial)
-            update_info_choice(key, initial)  # Ensure the initial value is set in active_taxonomy
 
             taxonomy_modified = is_source_taxonomy_changed(key)
             style_name = ("ModifiedTaxonomy.TMenubutton" if taxonomy_modified else "Taxonomy.TMenubutton")
@@ -2862,18 +2924,25 @@ def update_info_frame():
             value_label.grid(row=row, column=5, sticky="nsew")
             if display_value.endswith("..."):
                 Tooltip(value_label, text=str(value))
+        elif key.casefold() == "payed" and value:
+            value_frame = ttk.Frame(infoframe)
+            value_frame.grid(row=row, column=5, sticky="nsew")
+            value_frame.columnconfigure(0, weight=1)
+
+            value_label = ttk.Label(value_frame, text=handle_ellipsis(str(value)), style=f"InfoData{'Even' if row % 2 == 0 else 'Odd'}.TLabel")
+            value_label.grid(row=0, column=0, sticky="nsew")
+
+            edit_button = ttk.Button(value_frame, text="Edit", command=lambda d=active_contexts, p=value_frame, k=key: edit_data(d, p, k))
+            edit_button.grid(row=0, column=1, sticky="nsew")
+            edit_button.configure(padding=(0, 0))
         elif key and not value:
             var = tk.StringVar(value="")
             entry = ttk.Entry(infoframe, textvariable=var)
             entry.grid(row=row, column=5, sticky="nsew")
             missing_fields[key] = entry
 
-            def _on_submit_phys(event=None, k=key, v=var):
-                v.set(v.get().strip())
-                update_info_choice(k, v)
-
-            entry.bind("<Return>", _on_submit_phys)
-            entry.bind("<FocusOut>", _on_submit_phys)
+            entry.bind("<Return>", lambda e, value_key=key, value_var=var: _on_submit_data(event=e, k=value_key, v=value_var))
+            entry.bind("<FocusOut>", lambda e, value_key=key, value_var=var: _on_submit_data(event=e, k=value_key, v=value_var))
             entry.bind("<Escape>", lambda e: update_info_frame())
         else:
             value_label = ttk.Label(infoframe, text=handle_ellipsis(f"{value}"), style=f"InfoData{'Even' if row % 2 == 0 else 'Odd'}.TLabel")
@@ -3056,6 +3125,8 @@ def write_to_file(data, platform):
     if use_xls:
         with pd.ExcelWriter(file_name, engine='openpyxl', mode='a' if file_exists else 'w', if_sheet_exists='replace') as writer:
             combined.to_excel(writer, sheet_name=platform, index=False)
+
+        color_scanned_collection(file_name, platform)
     else:
         combined.to_csv(file_name, sep='\t', index=False)
 

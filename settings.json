@@ -15,7 +15,12 @@
         "N64": "Nintendo 64",
         "XBOX360": "Xbox 360",
         "XBOX": "Xbox",
-        "GBA": "Game Boy Advance"
+        "GBA": "Game Boy Advance",
+        "Evercade": "Evercade"
+    },
+    "platform_aliases": {
+        "GBA": "Gameboy Advance",
+        "GB": "Gameboy"
     },
     "context": {
         "formats": [
@@ -81,6 +86,9 @@
         "PS3": [
             "Platinum"
         ],
+        "PS4": [
+            "PlayStation Hits"
+        ],
         "PSP": [
             "Platinum",
             "Essentials",
@@ -112,6 +120,7 @@
         "style": [
             "Cartoony",
             "Hand-drawn",
+            "Pixel Art",
             "Realistic",
             "Stylized"
         ],
@@ -157,6 +166,7 @@
         "tone": [
             "Adult",
             "Comedic",
+            "Competitive",
             "Dark",
             "Dramatic",
             "Educational",
@@ -185,6 +195,7 @@
             "Sengoku",
             "Renaissance",
             "Industrial",
+            "Turn-Of-The-Century",
             "WWI",
             "WWII",
             "Cold War",
@@ -208,6 +219,7 @@
             "Island",
             "Japan",
             "Jungle",
+            "Mall",
             "Nature",
             "Open World",
             "Outdoor",
@@ -220,6 +232,7 @@
             "Tabletop",
             "Toy",
             "Urban",
+            "Village",
             "Winter"
         ],
         "theme": [
@@ -250,6 +263,7 @@
             "Steampunk",
             "Superhero",
             "Supernatural",
+            "Treasure Hunting",
             "Vampire",
             "War / Military",
             "Western",
@@ -259,7 +273,6 @@
             "4X",
             "Aimless",
             "Collect-a-thon",
-            "Competitive",
             "Expansion",
             "Exploration",
             "Extermination",
@@ -267,6 +280,7 @@
             "High Score",
             "Objective-Based",
             "Player-Driven",
+            "Rank-Based",
             "Story-Driven",
             "Survival",
             "Timetrial"
@@ -312,7 +326,8 @@
             "Skiing",
             "Sneaking",
             "Snowboarding",
-            "Strategy"
+            "Strategy",
+            "Walking"
         ],
         "type": [
             "Game",
@@ -681,7 +696,9 @@
             "custom_context_fallback": "#00AAAA",
             "row_even_bg": "#f8f8f8",
             "row_odd_bg": "#e8e8e8",
-            "taxonomy_modified": "#FFCC66"
+            "taxonomy_modified": "#FFCC66",
+            "yes": "#AAEEAA",
+            "no": "#EE9999"
         }
     },
     "shortcuts": {
