@@ -27,3 +27,6 @@ Run the following command in your terminal:
 # TODO
 
 - [ ] Make it less janky
+- [ ] Add button to update scanned collection to an updated DB
+- [X] Add button to export selected columns to a searchable PDF
+- [ ] Add color / gradients to contexts

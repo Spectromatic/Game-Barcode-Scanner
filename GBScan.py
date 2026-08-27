@@ -1,4 +1,5 @@
 import colorsys
+import hashlib
 import json
 import os
 import pyperclip
@@ -6,23 +7,35 @@ import re
 import requests
 import bs4 as bs
 import pandas as pd
+import subprocess
 import tkinter as tk
 import threading
 import webbrowser
 
 from io import BytesIO
+from openpyxl import load_workbook
+from openpyxl.styles import Border, PatternFill, Side
+from openpyxl.utils import get_column_letter
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont, ImageTk
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import landscape, A4
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.units import mm
+from reportlab.platypus import LongTable, TableStyle, Paragraph
+from reportlab.lib.styles import ParagraphStyle
+from reportlab.platypus import LongTable, SimpleDocTemplate, Paragraph
+from reportlab.pdfbase.pdfmetrics import stringWidth
+from xml.sax.saxutils import escape
 from tkinter import ttk
 from tkinter import messagebox, simpledialog
 from tooltip import Tooltip
-
-from openpyxl import load_workbook
-from openpyxl.styles import PatternFill
-from openpyxl.utils import get_column_letter
+from urllib.parse import quote_plus
 
 import sys
 BASE_DIR = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else os.path.dirname(__file__)
+OUTPUT_DIR = Path(f"{BASE_DIR}/Output")
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 active_game_data = {}
 active_game_is_new = False
@@ -146,26 +159,9 @@ def append_new_source_record():
         return
 
     platform = get_platform_name()
-    source_file = Path(BASE_DIR) / "Data" / f"{platform}.xlsx"
-    diff_dir = Path(BASE_DIR) / "Data" / "Diff"
-    diff_dir.mkdir(parents=True, exist_ok=True)
-    timestamp = get_timestamp()
-
     record = get_source_record()
-    record.update({
-        "added": timestamp,
-        "modified": "",
-        "platform": get_platform_name(),
-        **get_player_mode_flags(),
-    })
 
-    for key in get_taxonomy_keys():
-        record[key] = active_taxonomy.get(key, "")
-
-    for key in get_all_contexts():
-        source_key = key[:-1] if key.endswith("s") else key
-        record[source_key] = active_contexts.get(key, "")
-
+    source_file = Path(f"{BASE_DIR}/Data/{platform}.xlsx")
     source_data = pd.read_excel(source_file, engine="openpyxl", dtype=str).fillna("")
     source_data.columns = handle_normalized_cols(source_data.columns)
 
@@ -175,25 +171,195 @@ def append_new_source_record():
     source_data = pd.concat([source_data, pd.DataFrame([new_row])], ignore_index=True)
     source_data.to_excel(source_file, engine="openpyxl", index=False)
 
+def create_source_diff():
     # Create a file in the Diff directory to track new titles
+    platform = get_platform_name()
+    diff_dir = Path(f"{BASE_DIR}/Data/Diff")
+    diff_dir.mkdir(parents=True, exist_ok=True)
     diff_file = diff_dir / f"{platform}_new.json"
-    new_records = []
+    records = []
 
     if diff_file.exists():
         with diff_file.open("r", encoding="utf-8") as source:
             loaded_records = json.load(source)
             if isinstance(loaded_records, list):
-                new_records = loaded_records
+                records = loaded_records
 
-    normalized_title = handle_normalized_text(record["title"])
+    record = get_source_record()
+    normalized_record = {str(key).lower().replace(" ", "_"): value for key, value in record.items()}
+    title = handle_normalized_text(normalized_record.get("title", ""))
 
-    already_added = any(handle_normalized_text(item.get("title", "")) == normalized_title for item in new_records)
-
-    if not already_added:
-        new_records.append(normalized_record)
+    # Replace an older diff entry for this title.
+    records = [item for item in records if handle_normalized_text(item.get("title", "")) != title]
+    records.append(normalized_record)
 
     with diff_file.open("w", encoding="utf-8") as destination:
-        json.dump(new_records, destination, indent=4, ensure_ascii=True)
+        json.dump(records, destination, indent=4, ensure_ascii=True)
+
+def export_collection(export_format: str):
+    generated_files = []
+    if active_settings is None:
+        return
+
+    collection_path = get_collection_path()
+    workbook = pd.ExcelFile(collection_path, engine="openpyxl")
+
+    for platform in workbook.sheet_names:
+        data = pd.read_excel(collection_path, sheet_name=platform, engine="openpyxl", dtype=str,).fillna("")
+        columns_to_drop = {str(column).strip().casefold() for column in get_columns_to_drop(platform)}
+
+        column_export = active_settings.get("column_export", {})
+        export_columns = [str(column) for column in column_export if str(column).strip() and str(column).strip().casefold() not in columns_to_drop]
+        actual_columns = {str(column).strip().casefold(): column for column in data.columns}
+        selected_columns = [actual_columns[column.casefold()] for column in export_columns if column.casefold() in actual_columns]
+
+        if not selected_columns:
+            continue
+
+        export_data = data.loc[:, selected_columns]
+
+        if export_format == "tsv":
+            tsv_folder = OUTPUT_DIR / "TSV"
+            tsv_folder.mkdir(parents=True, exist_ok=True)
+            export_data.to_csv(tsv_folder / f"{platform} Collection.tsv", sep="\t", index=False)
+        elif export_format == "csv":
+            csv_folder = OUTPUT_DIR / "CSV"
+            csv_folder.mkdir(parents=True, exist_ok=True)
+            export_data.to_csv(csv_folder / f"{platform} Collection.csv", index=False)
+        elif export_format == "xlsx":
+            xlsx_folder = OUTPUT_DIR / "XLSX"
+            xlsx_folder.mkdir(parents=True, exist_ok=True)
+            export_data.to_excel(xlsx_folder / f"{platform} Collection.xlsx", index=False, engine="openpyxl")
+        elif export_format == "pdf":
+            pdf_folder = OUTPUT_DIR / "PDF"
+            pdf_folder.mkdir(parents=True, exist_ok=True)
+            pdf_path = export_pdfs(platform, export_data, pdf_folder)
+            if pdf_path is not None:
+                generated_files.append(str(pdf_path))
+
+    return generated_files
+
+def export_pdfs(platform, data, pdf_folder):
+    if active_settings is None:
+        return
+
+    if data is None or data.empty and len(data.columns) == 0:
+        return None
+
+    column_export = active_settings.get("column_export", {})
+    if not column_export:
+        handle_error("No columns have been selected for PDF export.")
+        return
+
+    data = data.fillna("")
+
+    styles = getSampleStyleSheet()
+    title_style = styles["Heading2"]
+    header_style = ParagraphStyle("PdfHeader", parent=styles["Normal"], fontName="Helvetica-Bold", fontSize=7, leading=8, textColor=colors.white)
+    cell_style = ParagraphStyle("PdfCell", parent=styles["Normal"], fontName="Courier", fontSize=6, leading=7)
+
+    # PDF Page Setup
+    pdf_path = pdf_folder / f"{platform} Collection.pdf"
+    margin = 2 * mm
+    document = SimpleDocTemplate(str(pdf_path), pagesize=landscape(A4), leftMargin=margin, rightMargin=margin, topMargin=margin, bottomMargin=margin)
+
+    # PDF Cell Setup
+    cell_padding = 6
+    character_width = cell_style.fontSize * 0.6
+    column_widths = [max(1, int(column_export.get(str(column), 10))) * character_width + cell_padding for column in data.columns]
+
+    header_data = []
+    for column, column_width in zip(data.columns, column_widths):
+        character_count = max(1, int(column_export.get(str(column), 10)),)
+        header_text = str(column)[:character_count]
+
+        available_width = max(1, column_width - cell_padding)
+        while (len(header_text) > 1 and stringWidth(header_text, header_style.fontName, header_style.fontSize,) > available_width):
+            header_text = header_text[:-1]
+
+        header_data.append(Paragraph(f"<nobr>{escape(header_text)}</nobr>", header_style,))
+
+    table_data = [header_data]
+
+    for row in data.itertuples(index=False, name=None):
+        table_row = []
+
+        for column, value in zip(data.columns, row):
+            character_count = max(1, int(column_export.get(str(column), 10)),)
+            value_text = str(value).strip()
+
+            if "url" in str(column).casefold() and value_text.startswith(("http://", "https://")):
+                if str(column).casefold() == "url":
+                    link_text = "MobyGames"
+                elif str(column).casefold() == "price url":
+                    link_text = "PriceCharting"
+                elif str(column).casefold() == "gameplay url":
+                    link_text = "Gameplay"
+                else:
+                    link_text = "Open Link"
+
+                link_text = link_text[:character_count]
+                cell_text = (f'<nobr><link href="{escape(value_text)}">{escape(link_text)}</link></nobr>')
+            else:
+                cell_text = (f"<nobr>{escape(value_text[:character_count])}</nobr>")
+
+            table_row.append(Paragraph(cell_text, cell_style))
+
+        table_data.append(table_row)
+
+    table = LongTable(table_data, colWidths=column_widths, repeatRows=1, splitByRow=1,)
+
+    custom_colors = active_settings.get("theming", {}).get("custom_colors", {})
+    even_background = colors.HexColor(custom_colors.get("row_even_bg", "#f8f8f8"))
+    odd_background = colors.HexColor(custom_colors.get("row_odd_bg", "#e8e8e8"))
+    yes_background = colors.HexColor(custom_colors.get("yes", "#d8ffd8"))
+    no_background = colors.HexColor(custom_colors.get("no", "#ffd8d8"))
+
+    yes_symbol = str(active_settings.get("symbols", {}).get("yes", "Y")).casefold()
+    no_symbol = str(active_settings.get("symbols", {}).get("no", "N")).casefold()
+
+    table_style_commands = [
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#3F5F73")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 3),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+        ("TOPPADDING", (0, 0), (-1, -1), 3),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+    ]
+
+    for row_index in range(1, len(table_data)):
+        row_background = even_background if row_index % 2 == 1 else odd_background
+        table_style_commands.append(("BACKGROUND", (0, row_index), (-1, row_index), row_background))
+
+    for row_index, row in enumerate(data.itertuples(index=False, name=None), start=1,):
+        for column_index, value in enumerate(row):
+            value_text = str(value).strip().casefold()
+
+            if value_text == yes_symbol:
+                table_style_commands.append(
+                    (
+                        "BACKGROUND",
+                        (column_index, row_index),
+                        (column_index, row_index),
+                        yes_background,
+                    )
+                )
+            elif value_text == no_symbol:
+                table_style_commands.append(
+                    (
+                        "BACKGROUND",
+                        (column_index, row_index),
+                        (column_index, row_index),
+                        no_background,
+                    )
+                )
+
+    table.setStyle(TableStyle(table_style_commands))
+    document.build([Paragraph(escape(str(platform)), title_style), table,])
+
+    return pdf_path
 
 def apply_taxonomy_style(key, menu):
     style_name = ("ModifiedTaxonomy.TMenubutton" if is_source_taxonomy_changed(key) else "Taxonomy.TMenubutton")
@@ -257,12 +423,17 @@ def color_scanned_collection(file_name, sheet_name):
     yes_fill = PatternFill(fill_type="solid", fgColor=active_settings["theming"]["custom_colors"]["yes"].lstrip("#"),)
     no_fill = PatternFill(fill_type="solid", fgColor=active_settings["theming"]["custom_colors"]["no"].lstrip("#"),)
 
+    border_color = active_settings["theming"]["custom_colors"]["export_border"].lstrip("#")
+    thin_side = Side(style="thin", color=border_color)
+    data_border = Border(bottom=thin_side, right=thin_side)
+
     for row_number in range(2, worksheet.max_row + 1):
         fill = even_fill if row_number % 2 == 0 else odd_fill
 
         for column_number in range(1, worksheet.max_column + 1):
             cell = worksheet.cell(row=row_number, column=column_number)
             cell.fill = fill
+            cell.border = data_border
             if str(cell.value).casefold() == active_settings["symbols"]["yes"].casefold():
                 cell.fill = yes_fill
             elif str(cell.value).casefold() == active_settings["symbols"]["no"].casefold():
@@ -324,6 +495,8 @@ def context_delete(frame, entries, context_choice, main_contextframe=None):
 
 def cycle_selection(name, direction=1):
     if active_settings is None:
+        return
+    if name == "release_range" and str(get_edition() or "").casefold() != "re-release":
         return
     var = active_selections.get(name)
     if not isinstance(var, tk.IntVar):
@@ -503,7 +676,8 @@ def game_accept():
         "Modified": [get_timestamp() if not active_game_is_new else ""],
         "UPC": [active_game_data.get('upc')] if active_game_data.get('upc') else "",
         "URL": [active_game_data.get('url')] if active_game_data.get('url') else "",
-        "Price URL": [active_game_data.get('price_url')] if active_game_data.get('price_url') else ""
+        "Price URL": [active_game_data.get('price_url')] if active_game_data.get('price_url') else "",
+        "Gameplay URL": [get_gameplay_url()] if active_game_data else ""
     }
     
     # Re-order the columns based on the order in the settings
@@ -518,6 +692,7 @@ def game_accept():
     if active_game_is_new:
         response = messagebox.askyesno("Add to source database", (f"Do you wish to add '{selected_title}' ({selected_platform}) to the source database?"))
         if response:
+            create_source_diff()
             try:
                 append_new_source_record()
             except Exception as exc:
@@ -527,6 +702,8 @@ def game_accept():
     # If there's changes to the taxonomy 
     elif is_source_taxonomy_changed() or is_source_game_data_changed():
         response = messagebox.askyesno("Update title", f"Do you wish to update the info for '{selected_title}' in the source database?")
+        if response:
+            create_source_diff()
         if response and not update_source_record():
             handle_error(f"Unable to update '{selected_title}' in the source database.")
             return
@@ -593,10 +770,47 @@ def get_case_condition():
         return None
     return active_settings["context"]["case_conditions"][active_selections.get("case_conditions", tk.IntVar()).get()]
 
+def get_collection_path():
+    return Path(f"{OUTPUT_DIR}/scanned_collection.xlsx")
+
+def get_collection_status():
+    statuses = {export_format: get_export_status(export_format) for export_format in ("tsv", "csv", "xlsx", "pdf")}
+
+    if any(status == "Master collection not found" for status in statuses.values()):
+        return "Master collection not found"
+
+    if all(status == "Current" for status in statuses.values()):
+        return "All exports current"
+
+    if all(status == "Not exported" for status in statuses.values()):
+        return "No exports generated"
+
+    return "Some exports out of date"
+
 def get_color(name, default):
     if active_settings is None:
         return default
     return active_settings["theming"]["custom_colors"].get(name, active_settings["theming"]["custom_colors"].get("custom_context_fallback", "#00AAAA")) if is_toggled("use_custom_colors") else default
+
+def get_columns_to_drop(platform):
+    if active_settings is None:
+        return []
+
+    platform_name = str(platform).strip().casefold()
+    columns_to_drop = []
+
+    for rule, columns in (active_settings.get("columns_to_drop") or {}).items():
+        rule_name = str(rule).strip()
+
+        if rule_name.casefold().startswith("not_"):
+            applies = (rule_name[4:].strip().casefold() != platform_name)
+        else:
+            applies = rule_name.casefold() == platform_name
+
+        if applies:
+            columns_to_drop.extend(columns or [])
+
+    return list(dict.fromkeys(columns_to_drop))
 
 def get_condition():
     if active_settings is None:
@@ -663,6 +877,21 @@ def get_edition():
         return None
     return active_settings["context"]["editions"][active_selections.get("editions", tk.IntVar()).get()]
 
+def get_export_status(export_format):
+    source_path = get_collection_path()
+    if not source_path.exists():
+        return "Master collection not found"
+
+    export_paths = [path for path in OUTPUT_DIR.glob(f"* Collection.{export_format}") if path != source_path]
+    if not export_paths:
+        return "Not exported"
+
+    source_mtime = source_path.stat().st_mtime_ns
+    if any(path.stat().st_mtime_ns < source_mtime for path in export_paths):
+        return "Out of date"
+
+    return "Current"
+
 def get_format():
     if active_settings is None:
         return None
@@ -676,23 +905,12 @@ def get_game_data(query, platform=None):
         handle_error("Settings file is missing")
         return
 
-    use_xls = is_toggled('use_xls')
-    xls_collate = is_toggled('use_xls_collate_sheets')
-
     platform = str(platform) if platform else str(get_platform_key())
     df = pd.DataFrame()  # Initialize an empty DataFrame
+    file_name = get_collection_path()
 
-    # build filename
-    if use_xls:
-        file_name = "scanned_collection.xlsx" if xls_collate else f"{platform}_scanned_collection.xlsx"
-    else:
-        file_name = f"{platform}_scanned_collection.csv"
-
-    if use_xls:
-        result = pd.read_excel(file_name, sheet_name=platform, engine="openpyxl", dtype=str)
-        df = result[platform] if isinstance(result, dict) else result
-    else:
-        df = pd.read_csv(file_name, sep="\t", dtype=str)
+    result = pd.read_excel(file_name, sheet_name=platform, engine="openpyxl", dtype=str)
+    df = result[platform] if isinstance(result, dict) else result
 
     # Try both UPC and title
     if is_upc(query):
@@ -794,6 +1012,15 @@ def get_game_source_data(query):
 
     print(f"Found through method: {found_method}")
     return matches.iloc[-1]
+
+def get_gameplay_url():
+    title = get_simplified_text(active_game_data.get("title", ""))
+    release_date = str(active_game_data.get("release_date", "") or "")
+    platform = get_platform_key()
+    search_text = f"{title} {release_date} {platform} gameplay"
+    search_text = " ".join(search_text.split())
+
+    return f"https://www.youtube.com/results?search_query={quote_plus(search_text)}"
 
 def get_moby_id(url=None):
     if url is None:
@@ -935,7 +1162,7 @@ def get_simplified_text(text):
     text = " ".join(text.split())
     return text
 
-def get_source_record(game_data=None):
+def get_filtered_game_data(game_data=None):
     if active_settings is None:
         return {}
     game_data = active_game_data if game_data is None else game_data
@@ -949,6 +1176,25 @@ def get_soup(url):
         return None
     soup = bs.BeautifulSoup(response.text, 'html.parser')
     return soup if soup is not None else None
+
+def get_source_record(game_data=None):
+    timestamp = get_timestamp()
+    record = get_filtered_game_data(game_data)
+    record.update({
+        "added": active_source_game_data.get("added", "") if active_game_is_new else timestamp,
+        "modified": "" if active_game_is_new else timestamp,
+        "platform": get_platform_name(),
+        **get_player_mode_flags(),
+    })
+
+    for key in get_taxonomy_keys():
+        record[key] = active_taxonomy.get(key, "")
+
+    for key in get_all_contexts():
+        source_key = key[:-1] if key.endswith("s") else key
+        record[source_key] = active_contexts.get(key, "")
+
+    return record
 
 def get_specific_soup_by_class(url, tag, class_name, known_soup=None):
     if known_soup is not None:
@@ -1284,7 +1530,7 @@ def is_source_game_data_changed(key = None):
     if active_game_is_new or not active_source_game_data:
         return False
 
-    source_record = get_source_record()
+    source_record = get_filtered_game_data()
     source_keys = source_record.keys()
 
     if key is not None:
@@ -1393,6 +1639,118 @@ def open_column_order_window():
 
     close_button = ttk.Button(column_order_frame, text="Close", command=column_order_window.destroy)
     close_button.grid(row=2, column=0, columnspan=2, sticky="nsew", padx=4, pady=4)
+
+def open_column_export_window():
+    if active_settings is None:
+        return
+
+    column_export_window = tk.Toplevel(class_="GBScan")
+    column_export_window.title("GBScan - Export Columns")
+    column_export_window.columnconfigure(0, weight=1)
+    column_export_window.rowconfigure(0, weight=1)
+
+    column_selection_frame = ttk.LabelFrame(column_export_window, text="Column Selection", padding=4)
+    column_selection_frame.grid(row=0, column=1, sticky="nsew", padx=4, pady=4)
+    column_selection_frame.columnconfigure(0, weight=1)
+    column_selection_frame.columnconfigure(2, weight=1)
+    column_selection_frame.rowconfigure(0, weight=1)
+
+    column_order_frame = ttk.Label(column_selection_frame)
+    column_order_frame.grid(row=0, column=0, sticky="nsew")
+    column_order_frame.columnconfigure(0, weight=1)
+    column_order_frame.rowconfigure(0, weight=1)
+
+    columns = active_settings.get("column_order", [])
+    column_listbox = tk.Listbox(column_order_frame, height=25)
+    column_listbox.grid(row=0, column=0, sticky="nsew")
+    for col in columns:
+        column_listbox.insert(tk.END, col)
+    column_scrollbar = ttk.Scrollbar(column_order_frame, orient="vertical", command=column_listbox.yview)
+    column_scrollbar.grid(row=0, column=1, sticky="ns")
+    column_listbox.configure(yscrollcommand=column_scrollbar.set)
+
+    column_control_frame = ttk.Label(column_selection_frame)
+    column_control_frame.grid(row=0, column=1, sticky="nsew", padx=4, pady=4)
+    column_control_frame.rowconfigure(0, weight=1)
+
+    def refresh_columns():
+        if active_settings is None:
+            return
+
+        column_export = active_settings.setdefault("column_export", {})
+        column_order = active_settings.get("column_order", [])
+
+        ordered_columns = sorted(column_export, key=lambda column: column_order.index(column) if column in column_order else len(column_order),)
+        active_settings["column_export"] = {column: column_export[column] for column in ordered_columns}
+
+        for child in column_export_frame.winfo_children():
+            child.destroy()
+
+        ttk.Label(column_export_frame, text="Column",).grid(row=0, column=0, sticky="nw", padx=2)
+        ttk.Label(column_export_frame, text="Width",).grid(row=0, column=1, sticky="nw", padx=2)
+
+        for row, column in enumerate(ordered_columns, start=1):
+            ttk.Label(column_export_frame, text=column,).grid(row=row, column=0, sticky="w", padx=2, pady=1)
+
+            width_var = tk.StringVar(value=str(column_export.get(column, 10)))
+            width_entry = ttk.Entry(column_export_frame, textvariable=width_var, width=6,)
+            width_entry.grid(row=row, column=1, sticky="w", padx=2, pady=1)
+            rem_btn = ttk.Button(column_export_frame, text="Remove", command=lambda c=column: rem_column(c),)
+            rem_btn.configure(padding=0)
+            rem_btn.grid(row=row, column=2, sticky="w")
+
+            def save_width(event=None, c=column, v=width_var):
+                if active_settings is None:
+                    return
+                try:
+                    width = max(1, int(v.get()))
+                except ValueError:
+                    width = 10
+
+                v.set(str(width))
+                active_settings["column_export"][c] = width
+
+            width_entry.bind("<FocusOut>", save_width)
+            width_entry.bind("<Return>", save_width)
+
+    def add_column():
+        if active_settings is None:
+            return
+        selected_indices = column_listbox.curselection()
+        column_export = active_settings.setdefault("column_export", {})
+
+        for index in selected_indices:
+            column = column_listbox.get(index)
+
+            if column not in column_export:
+                column_export[column] = 10
+
+        refresh_columns()
+
+    def rem_column(column):
+        if active_settings is None:
+            return
+        active_settings.setdefault("column_export", {}).pop(column, None)
+        refresh_columns()
+
+    def save_and_close():
+        settings_save()
+        column_export_window.destroy()
+
+    column_control_add_btn = ttk.Button(column_control_frame, text=">", command=add_column)
+    column_control_add_btn.grid(row=0, column=0, sticky="nsew")
+
+    column_export_frame = ttk.Label(column_selection_frame)
+    column_export_frame.grid(row=0, column=2, sticky="nsew")
+    column_export_frame.columnconfigure(0, weight=1)
+    column_export_frame.rowconfigure(0, weight=1)
+
+    export_listbox = tk.Listbox(column_export_frame, height=25)
+    export_listbox.grid(row=0, column=0, sticky="nsew")
+    refresh_columns()
+    
+    close_button = ttk.Button(column_selection_frame, text="Close", command=save_and_close)
+    close_button.grid(row=1, column=0, columnspan=3, sticky="nsew", padx=0, pady=(4,0))
 
 def open_custom_colors_window():
     if active_settings is None:
@@ -2440,7 +2798,7 @@ def search_game(query):
         active_taxonomy[taxonomy_key] = value
         active_source_taxonomy[taxonomy_key] = value
 
-    active_source_game_data = get_source_record(match)
+    active_source_game_data = get_filtered_game_data(match)
 
     # Get the context data from the match or use the default values if not found
     for context in get_all_contexts():
@@ -2764,42 +3122,37 @@ def update_info_frame():
         # Determine the background color based on whether the source game data has changed
         modified = is_source_game_data_changed(key)
         row_style = (f"ModifiedInfoData{'Even' if row % 2 == 0 else 'Odd'}.TLabel" if modified else f"InfoData{'Even' if row % 2 == 0 else 'Odd'}.TLabel")
-        normal_background = (active_settings["theming"]["custom_colors"]["row_even_bg"] if row % 2 == 0 else active_settings["theming"]["custom_colors"]["row_odd_bg"])
-        modified_background = (get_color("taxonomy_modified", "#FFCC66") if modified else normal_background)
 
-        if key.casefold() == "url" and value == "" and active_game_data.get("title", "") != "":
+        url_title = get_simplified_text(active_game_data.get("title", ""))
+        url_fallback_moby = "https://www.mobygames.com/search/?q=" + quote_plus(str(url_title))
+        release_range = get_release_range()
+        edition = get_edition()
+        if release_range and edition == "re-release":
+            url_title = f"{url_title} {release_range}"
+        url_fallback_price = "https://www.pricecharting.com/search-products?type=prices&q=" + quote_plus(str(url_title))
+        url_fallback_yt = get_gameplay_url()
+
+        fallback_url = url_fallback_price if key.casefold() == "price_url" else url_fallback_moby if key.casefold() == "url" else url_fallback_yt
+        fallback_text = "Search Pricecharting" if key.casefold() == "price_url" else "Search MobyGames" if key.casefold() == "url" else "See Gameplay"
+
+        if (key.casefold() == "url" or key.casefold() == "price_url" or key.casefold() == "gameplay_url") and value == "" and active_game_data.get("title", "") != "":
             url_frame = ttk.Frame(infoframe)
             url_frame.grid(row=row, column=1, sticky="nsew", padx=0, pady=0)
             url_frame.columnconfigure(0, weight=1)
             url_frame.columnconfigure(1, weight=0)
-            fallback_url = "https://www.mobygames.com/search/?q=" + str(get_simplified_text(active_game_data.get("title", "")).replace(" ", "%20"))
-            value_label = tk.Label(url_frame, text=handle_ellipsis("Search MobyGames"), fg="#0563C1", cursor="hand2", anchor="w", background=(active_settings["theming"]["custom_colors"]["row_even_bg"] if row % 2 == 0 else active_settings["theming"]["custom_colors"]["row_odd_bg"]),)
+            value_label = tk.Label(url_frame, text=handle_ellipsis(fallback_text), fg="#0563C1", cursor="hand2", anchor="w", background=(active_settings["theming"]["custom_colors"]["row_even_bg"] if row % 2 == 0 else active_settings["theming"]["custom_colors"]["row_odd_bg"]),)
             value_label.bind("<Button-1>", lambda event, url=fallback_url: handle_url(event, url),)
             value_label.grid(row=0, column=0, sticky="nsew", padx=(0, 4), pady=0)
             Tooltip(value_label, text=fallback_url)
-            add_id_btn = ttk.Button(url_frame, text="Add ID", command=lambda k=key: add_id(k))
-            add_id_btn.grid(row=0, column=1, sticky="nsew")
-            add_id_btn.configure(padding=(0, 0))
-            missing_fields[key] = add_id_btn
-        elif key.casefold() == "price_url" and value == "" and active_game_data.get("title", "") != "":
-            url_frame = ttk.Frame(infoframe)
-            url_frame.grid(row=row, column=1, sticky="nsew", padx=0, pady=0)
-            url_frame.columnconfigure(0, weight=1)
-            url_frame.columnconfigure(1, weight=0)
-            search_title = get_simplified_text(active_game_data.get("title", ""))
-            release_range = get_release_range()
-
-            if release_range:
-                search_title = f"{search_title} {release_range}"
-            fallback_url = "https://www.pricecharting.com/search-products?type=prices&q=" + str(search_title).replace(" ", "%20")
-            value_label = tk.Label(url_frame, text=handle_ellipsis("Search PriceCharting"), fg="#0563C1", cursor="hand2", anchor="w", background=(active_settings["theming"]["custom_colors"]["row_even_bg"] if row % 2 == 0 else active_settings["theming"]["custom_colors"]["row_odd_bg"]),)
-            value_label.bind("<Button-1>", lambda event, url=fallback_url: handle_url(event, url),)
-            value_label.grid(row=0, column=0, sticky="nsew", padx=(0, 4), pady=0)
-            Tooltip(value_label, text=fallback_url)
-            add_price_url_btn = ttk.Button(url_frame, text="Add URL", command=lambda k=key: add_url(k))
-            add_price_url_btn.grid(row=0, column=1, sticky="nsew")
-            add_price_url_btn.configure(padding=(0, 0))
-            missing_fields[key] = add_price_url_btn
+            if key.casefold() == "url":
+                add_value_btn = ttk.Button(url_frame, text="Add ID", command=lambda k=key: add_id(k))
+            elif key.casefold() == "price_url":
+                add_value_btn = ttk.Button(url_frame, text="Add URL", command=lambda k=key: add_url(k))
+            elif key.casefold() == "gameplay_url":
+                add_value_btn = ttk.Label(url_frame, text="")
+            add_value_btn.grid(row=0, column=1, sticky="nsew")
+            add_value_btn.configure(padding=(0, 0))
+            missing_fields[key] = add_value_btn
         elif key.casefold() == "url" and value or key.casefold() == "price_url" and value:
             value_frame = ttk.Frame(infoframe)
             value_frame.grid(row=row, column=1, sticky="nsew")
@@ -2833,7 +3186,6 @@ def update_info_frame():
             value_frame.grid(row=row, column=1, sticky="nsew")
             value_frame.columnconfigure(0, weight=1)
             value_frame.configure(style="ModifiedInfoData.TFrame" if modified else "InfoData.TFrame")
-            value_style = (f"ModifiedInfoData{'Even' if row % 2 == 0 else 'Odd'}.TLabel" if modified else f"InfoData{'Even' if row % 2 == 0 else 'Odd'}.TLabel")
             if not value:
                 var = tk.StringVar(value="")
                 entry = ttk.Entry(value_frame, textvariable=var)
@@ -2980,7 +3332,7 @@ def update_source_record():
         existing_added = existing_row["added"].iloc[0]
         existing_modified = existing_row["modified"].iloc[0] if "modified" in existing_row else None
 
-        record = get_source_record()
+        record = get_filtered_game_data()
         record.update({
             "platform": platform,
             "added": existing_added,
@@ -3082,23 +3434,16 @@ def write_to_file(data, platform):
     if active_settings is None:
         return
 
-    file_name = f"{platform}_scanned_collection.csv"
-    # Toggle whether to write xls to a single file with tabs or separate files
-    if is_toggled('use_xls'):
-        file_name = f"{platform}_scanned_collection.xlsx" if not is_toggled('use_xls_collate_sheets') else "scanned_collection.xlsx"
+    file_name = get_collection_path()
     clipboard = is_toggled('use_clipboard')
 
     # Read the existing file and make sure the platform sheet exists if using xls
     file_exists = os.path.isfile(file_name)
-    use_xls = is_toggled('use_xls')
     existing = pd.DataFrame()
     if file_exists:
-        if use_xls:
-            xl = pd.ExcelFile(file_name, engine='openpyxl')
-            if platform in xl.sheet_names:
-                existing = pd.read_excel(file_name, sheet_name=platform, engine='openpyxl', dtype=str)
-        else:
-            existing = pd.read_csv(file_name, sep='\t', dtype=str)
+        xl = pd.ExcelFile(file_name, engine='openpyxl')
+        if platform in xl.sheet_names:
+            existing = pd.read_excel(file_name, sheet_name=platform, engine='openpyxl', dtype=str)
 
     # Make sure the headers are right
     combined, new_reindexed = write_new_headers(data, existing)
@@ -3113,22 +3458,15 @@ def write_to_file(data, platform):
         new_reindexed = new_reindexed.drop(columns=[col for col in drop_content_cols if col in new_reindexed.columns], errors='ignore')
 
     # Drop the specified columns, or the columns that don't match the platform
-    drop_columns = []
-    for key, columns in (active_settings.get('columns_to_drop') or {}).items():
-        if key == platform or (key.startswith('NOT_') and key[4:] != platform):
-            # Drop the specified columns, but only if they exist in the DataFrame
-            drop_columns.extend([col for col in (columns or []) if col in combined.columns])
+    drop_columns = [column for column in get_columns_to_drop(platform) if column in combined.columns]
     combined = combined.drop(columns=drop_columns, errors='ignore')  
     new_reindexed = new_reindexed.drop(columns=drop_columns, errors='ignore')
 
     # Write the file back with new data
-    if use_xls:
-        with pd.ExcelWriter(file_name, engine='openpyxl', mode='a' if file_exists else 'w', if_sheet_exists='replace') as writer:
-            combined.to_excel(writer, sheet_name=platform, index=False)
+    with pd.ExcelWriter(file_name, engine='openpyxl', mode='a' if file_exists else 'w', if_sheet_exists='replace') as writer:
+        combined.to_excel(writer, sheet_name=platform, index=False)
 
-        color_scanned_collection(file_name, platform)
-    else:
-        combined.to_csv(file_name, sep='\t', index=False)
+    color_scanned_collection(file_name, platform)
 
     if clipboard:
         pyperclip.copy(new_reindexed.to_csv(sep='\t', index=False, header=False))
@@ -3361,8 +3699,72 @@ def main():
     symyesentrystringvar.trace_add('write', lambda *a: sym_save("yes", symyesentrystringvar))
     symnoentrystringvar.trace_add('write',  lambda *a: sym_save("no",  symnoentrystringvar))
 
+    # Collections Tab
+    col_tab = ttk.Frame(main_notebook, padding="4")
+    col_tab.columnconfigure(0, weight=1)
+
+    col_loc_frame = ttk.LabelFrame(col_tab, padding="4", text="Collection Location")
+    col_loc_frame.grid(row=0, column=0, sticky="ew")
+    col_loc_frame.columnconfigure(1, weight=1)
+
+    col_loc_label = ttk.Label(col_loc_frame, text="Location:")
+    col_loc_label.grid(row=0, column=0, sticky="w")
+    col_loc_entry_var = tk.StringVar(value=str(OUTPUT_DIR))
+    col_loc_entry = ttk.Entry(col_loc_frame, textvariable=col_loc_entry_var)
+    col_loc_entry.grid(row=0, column=1, sticky="ew", padx=4)
+
+    col_loc_indicator = ttk.Label(col_loc_frame, text="")
+    col_loc_indicator.grid(row=0, column=3, sticky="w", padx=4)
+
+    def open_folder():
+        folder_path = col_loc_entry_var.get().strip()
+        subprocess.Popen(["xdg-open", str(folder_path)])
+
+    col_loc_btn = ttk.Button(col_loc_frame, text="Open Folder", command=open_folder)
+    col_loc_btn.grid(row=0, column=2, sticky="ew")
+    col_loc_btn.configure(padding=0)
+
+    col_exp_status_frame = ttk.LabelFrame(col_tab, padding="4", text="Collection Export Status")
+    col_exp_status_frame.grid(row=1, column=0, sticky="ew", pady=4)
+    col_exp_status_frame.columnconfigure(1, weight=1)
+
+    col_exp_status_label = ttk.Label(col_exp_status_frame, text="Status:")
+    col_exp_status_label.grid(row=0, column=0, sticky="w")
+    col_exp_status_value = ttk.Label(col_exp_status_frame, text=get_collection_status())
+    col_exp_status_value.grid(row=0, column=1, sticky="w", padx=4)
+
+    col_exp_frame = ttk.Frame(col_exp_status_frame, padding="4", relief="groove")
+    col_exp_frame.grid(row=1, column=0, columnspan=2, sticky="ew", pady=4)
+    col_exp_frame.columnconfigure(0, weight=1)
+    col_exp_frame.columnconfigure(1, weight=1)
+    col_exp_frame.columnconfigure(2, weight=1)
+    col_exp_frame.columnconfigure(3, weight=1)
+    col_exp_frame.columnconfigure(4, weight=1)
+
+    col_exp_col_select_btn = ttk.Button(col_exp_frame, text="Select Columns", command=lambda: open_column_export_window())
+    col_exp_col_select_btn.grid(row=1, column=0, sticky="ew")
+    col_exp_col_select_btn.configure(padding=0)
+
+    col_exp_pdf_btn = ttk.Button(col_exp_frame, text="Export as PDF", command=lambda: export_collection("pdf"))
+    col_exp_pdf_btn.grid(row=1, column=1, sticky="ew")
+    col_exp_pdf_btn.configure(padding=0)
+
+    col_exp_csv_btn = ttk.Button(col_exp_frame, text="Export as CSV", command=lambda: export_collection("csv"))
+    col_exp_csv_btn.grid(row=1, column=2, sticky="ew")
+    col_exp_csv_btn.configure(padding=0)
+
+    col_exp_tsv_btn = ttk.Button(col_exp_frame, text="Export as TSV", command=lambda: export_collection("tsv"))
+    col_exp_tsv_btn.grid(row=1, column=3, sticky="ew")
+    col_exp_tsv_btn.configure(padding=0)
+
+    col_exp_xls_btn = ttk.Button(col_exp_frame, text="Export as XLS", command=lambda: export_collection("xls"))
+    col_exp_xls_btn.grid(row=1, column=4, sticky="ew")
+    col_exp_xls_btn.configure(padding=0)
+
+
     main_notebook.add(mainframe, text="Main")
     main_notebook.add(setup_tab, text="Setup")
+    main_notebook.add(col_tab, text="Collection")
 
     # Invoke the Search button when Enter is pressed inside the entry
     searchentry.bind('<Return>', lambda event: searchbutton.invoke())

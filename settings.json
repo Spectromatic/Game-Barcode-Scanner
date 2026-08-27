@@ -99,6 +99,16 @@
         ],
         "3DS": [
             "Nintendo Selects"
+        ],
+        "PC": [
+            "Xplosiv",
+            "Ubisoft eXclusive",
+            "Sold Out Software",
+            "BestSeller",
+            "Best Of Infogrames",
+            "Dice Multimedia",
+            "Play 4 Less",
+            "PC Best Buy"
         ]
     },
     "custom_context": {},
@@ -232,6 +242,7 @@
             "Tabletop",
             "Toy",
             "Urban",
+            "Various",
             "Village",
             "Winter"
         ],
@@ -443,7 +454,8 @@
         "Modified",
         "UPC",
         "URL",
-        "Price URL"
+        "Price URL",
+        "Gameplay URL"
     ],
     "columns_to_drop": {
         "NOT_PC": [
@@ -465,11 +477,33 @@
             "Force Feedback"
         ],
         "Switch": [
-            "Condition"
+            "Condition",
+            "Format"
         ],
         "PSP": [
             "Hotseat"
+        ],
+        "XBOX360": [
+            "Format"
         ]
+    },
+    "column_export": {
+        "Title": 50,
+        "Release Date": 4,
+        "Case": 1,
+        "Sleeve": 1,
+        "Manual": 1,
+        "Condition": 18,
+        "Case Condition": 10,
+        "Format": 9,
+        "Edition": 10,
+        "Developer": 20,
+        "Payed": 5,
+        "Value": 7,
+        "UPC": 13,
+        "URL": 10,
+        "Price URL": 13,
+        "Gameplay URL": 10
     },
     "symbols": {
         "yes": "Y",
@@ -637,10 +671,12 @@
         "age_rating": "",
         "upc": "",
         "url": "",
-        "price_url": ""
+        "price_url": "",
+        "gameplay_url": ""
     },
     "scraped_data_exclusion": [
-        "price_url"
+        "price_url",
+        "gameplay_url"
     ],
     "scraped_taxonomy": {
         "perspective": [],
@@ -654,8 +690,6 @@
     },
     "toggles": {
         "use_the_suffix": true,
-        "use_xls": true,
-        "use_xls_collate_sheets": true,
         "use_clipboard": true,
         "use_full_platform_name": false,
         "use_content_split": true,
@@ -667,16 +701,16 @@
         "use_playercount_split": true
     },
     "toggle_descriptions": {
+        "use_dx_point_drop": "Drop the decimal points from DirectX version numbers. So DX8.1 becomes DX8, for example.",
         "use_the_suffix": "Move leading 'The' to the end of the saved title.",
-        "use_xls": "Write output to an XLS file instead of CSV.",
         "use_clipboard": "Copy new rows to the clipboard after saving.",
         "use_custom_ttk_theme": "Apply the configured ttk theme.",
         "use_custom_colors": "Use custom colors for context buttons.",
-        "use_content_split": "Split contents (case/sleeve/manual) into separate columns.",
+        "use_content_split": "Split contents (Case/Sleeve/Manual) into separate columns.",
         "use_full_platform_name": "Save the full platform name instead of the key in the output.",
         "use_pal": "Prefer PAL platform names when scraping prices.",
         "use_taxonomy": "Enable taxonomy fields.",
-        "use_playercount_split": "Split player taxonomy (SP/MP/Coop) into separate columns."
+        "use_playercount_split": "Split player taxonomy (SP/Hotseat/MP/Coop) into separate columns."
     },
     "theming": {
         "ttk_theme": "clam",
@@ -698,7 +732,8 @@
             "row_odd_bg": "#e8e8e8",
             "taxonomy_modified": "#FFCC66",
             "yes": "#AAEEAA",
-            "no": "#EE9999"
+            "no": "#EE9999",
+            "export_border": "#000000"
         }
     },
     "shortcuts": {
@@ -707,6 +742,7 @@
         "conditions": "F3",
         "case_conditions": "F4",
         "contents": "F5",
-        "editions": "F6"
+        "editions": "F6",
+        "release_range": "F7"
     }
 }
