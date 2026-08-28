@@ -19,6 +19,7 @@ from openpyxl.utils import get_column_letter
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont, ImageTk
 from reportlab.lib import colors
+from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT
 from reportlab.lib.pagesizes import landscape, A4
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.units import mm
@@ -29,14 +30,15 @@ from reportlab.pdfbase.pdfmetrics import stringWidth
 from xml.sax.saxutils import escape
 from tkinter import ttk
 from tkinter import messagebox, simpledialog
-from tooltip import Tooltip
+from tooltip import Tooltip, CanvasTooltip
+from typing import Literal, cast
 from urllib.parse import quote_plus
 
 import sys
 BASE_DIR = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else os.path.dirname(__file__)
 OUTPUT_DIR = Path(f"{BASE_DIR}/Output")
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-
+CHARTS_PER_ROW = 3
 active_game_data = {}
 active_game_is_new = False
 active_perspective = None
@@ -66,6 +68,11 @@ thumbnail_label = None
 thumbnail_image = None
 thumbnail_tooltip = None
 thumbnail_refresh_btn = None
+export_status = {}
+collection_stats_labels = {}
+col_stats_chart = {}
+col_stats_chart_data = {}
+col_stats_graph_frame = None
 
 def add_id(key):
     print(f"Debug: Adding Moby ID")
@@ -257,6 +264,7 @@ def export_pdfs(platform, data, pdf_folder):
     title_style = styles["Heading2"]
     header_style = ParagraphStyle("PdfHeader", parent=styles["Normal"], fontName="Helvetica-Bold", fontSize=7, leading=8, textColor=colors.white)
     cell_style = ParagraphStyle("PdfCell", parent=styles["Normal"], fontName="Courier", fontSize=6, leading=7)
+    paragraph_alignments = {"left": TA_LEFT, "center": TA_CENTER, "right": TA_RIGHT}
 
     # PDF Page Setup
     pdf_path = pdf_folder / f"{platform} Collection.pdf"
@@ -266,26 +274,31 @@ def export_pdfs(platform, data, pdf_folder):
     # PDF Cell Setup
     cell_padding = 6
     character_width = cell_style.fontSize * 0.6
-    column_widths = [max(1, int(column_export.get(str(column), 10))) * character_width + cell_padding for column in data.columns]
+    column_widths = [max(1, int(column_export[str(column)]["width"])) * character_width + cell_padding for column in data.columns]
 
     header_data = []
-    for column, column_width in zip(data.columns, column_widths):
-        character_count = max(1, int(column_export.get(str(column), 10)),)
+    for column_index, (column, column_width) in enumerate(zip(data.columns, column_widths)):
+        character_count = max(1, int(column_export[str(column)]["width"]))
         header_text = str(column)[:character_count]
 
         available_width = max(1, column_width - cell_padding)
         while (len(header_text) > 1 and stringWidth(header_text, header_style.fontName, header_style.fontSize,) > available_width):
             header_text = header_text[:-1]
 
-        header_data.append(Paragraph(f"<nobr>{escape(header_text)}</nobr>", header_style,))
+        align = column_export[str(column)].get("align", "left")
+        if align not in paragraph_alignments:
+            align = "left"
+
+        column_header_style = ParagraphStyle(f"PdfHeader{column_index}", parent=header_style, alignment=cast(Literal[0, 1, 2, 4], paragraph_alignments[align]))
+        header_data.append(Paragraph(f"<nobr>{escape(header_text)}</nobr>", column_header_style,))
 
     table_data = [header_data]
 
     for row in data.itertuples(index=False, name=None):
         table_row = []
 
-        for column, value in zip(data.columns, row):
-            character_count = max(1, int(column_export.get(str(column), 10)),)
+        for column_index, (column, value) in enumerate(zip(data.columns, row)):
+            character_count = max(1, int(column_export[str(column)]["width"]))
             value_text = str(value).strip()
 
             if "url" in str(column).casefold() and value_text.startswith(("http://", "https://")):
@@ -303,7 +316,12 @@ def export_pdfs(platform, data, pdf_folder):
             else:
                 cell_text = (f"<nobr>{escape(value_text[:character_count])}</nobr>")
 
-            table_row.append(Paragraph(cell_text, cell_style))
+            align = column_export[str(column)].get("align", "left")
+            if align not in paragraph_alignments:
+                align = "left"
+
+            column_cell_style = ParagraphStyle(f"PdfCell{column_index}", parent=cell_style, alignment=cast(Literal[0, 1, 2, 4], paragraph_alignments[align]))
+            table_row.append(Paragraph(cell_text, column_cell_style))
 
         table_data.append(table_row)
 
@@ -318,15 +336,18 @@ def export_pdfs(platform, data, pdf_folder):
     yes_symbol = str(active_settings.get("symbols", {}).get("yes", "Y")).casefold()
     no_symbol = str(active_settings.get("symbols", {}).get("no", "N")).casefold()
 
+    padding_vertical = 1
+    padding_horizontal = 1
+
     table_style_commands = [
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#3F5F73")),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
         ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 3),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 3),
-        ("TOPPADDING", (0, 0), (-1, -1), 3),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+        ("LEFTPADDING", (0, 0), (-1, -1), padding_horizontal),
+        ("RIGHTPADDING", (0, 0), (-1, -1), padding_horizontal),
+        ("TOPPADDING", (0, 0), (-1, -1), padding_vertical),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), padding_vertical),
     ]
 
     for row_index in range(1, len(table_data)):
@@ -355,6 +376,20 @@ def export_pdfs(platform, data, pdf_folder):
                         no_background,
                     )
                 )
+    for column_index, column in enumerate(data.columns):
+        align = column_export[str(column)].get("align", "left")
+
+        if align not in ("left", "center", "right"):
+            align = "left"
+
+        table_style_commands.append(
+            (
+                "ALIGN",
+                (column_index, 0),
+                (column_index, -1),
+                align.upper(),
+            )
+        )
 
     table.setStyle(TableStyle(table_style_commands))
     document.build([Paragraph(escape(str(platform)), title_style), table,])
@@ -779,13 +814,64 @@ def get_collection_status():
     if any(status == "Master collection not found" for status in statuses.values()):
         return "Master collection not found"
 
-    if all(status == "Current" for status in statuses.values()):
-        return "All exports current"
+    current = [export_format.upper() for export_format, status in statuses.items() if status == "Current"]
+    out_of_date = [export_format.upper() for export_format, status in statuses.items() if status == "Out of date"]
+    not_exported = [export_format.upper() for export_format, status in statuses.items() if status == "Not exported"]
 
-    if all(status == "Not exported" for status in statuses.values()):
-        return "No exports generated"
+    status_parts = []
 
-    return "Some exports out of date"
+    if current:
+        status_parts.append(f"Up to date: {', '.join(current)}")
+    if out_of_date:
+        status_parts.append(f"Out of date: {', '.join(out_of_date)}")
+    if not_exported:
+        status_parts.append(f"Not exported: {', '.join(not_exported)}")
+
+    return " | ".join(status_parts)
+
+def get_collection_stats():
+    collection_path = get_collection_path()
+
+    stats = {
+        "titles": 0,
+        "payed": 0.0,
+        "value": 0.0,
+        "platforms": 0,
+        "platform_titles": {},
+        "platform_value": {},
+        "platform_payed": {}
+    }
+
+    if active_settings is None or not collection_path.exists():
+        return stats
+
+    workbook = pd.ExcelFile(collection_path, engine="openpyxl")
+
+    for platform in workbook.sheet_names:
+        data = pd.read_excel(collection_path, sheet_name=platform, engine="openpyxl", dtype=str).fillna("")
+        columns = {str(column).strip().casefold(): column for column in data.columns}
+
+        title_column = columns.get("title")
+        payed_column = columns.get("payed")
+        value_column = columns.get("value")
+
+        if payed_column is not None:
+            payed_values = (data[payed_column].astype(str).str.strip().str.replace("$", "", regex=False).str.replace(",", ".", regex=False))
+            stats["payed"] += pd.to_numeric(payed_values, errors="coerce").fillna(0).sum()
+
+        if value_column is not None:
+            value_values = (data[value_column].astype(str).str.strip().str.replace("$", "", regex=False).str.replace(",", ".", regex=False))
+            stats["value"] += pd.to_numeric(value_values, errors="coerce").fillna(0).sum() * (active_settings["currency_conversion"]["conversion_factor"] if is_toggled("use_currency_conversion") else 1)
+
+        if title_column is not None:
+            stats["titles"] += data[title_column].astype(str).str.strip().ne("").sum()
+
+        stats["platform_titles"][platform] = data[title_column].astype(str).str.strip().ne("").sum()
+        stats["platforms"] += 1
+        stats["platform_value"][platform] = pd.to_numeric(value_values, errors="coerce").fillna(0).sum() * (active_settings["currency_conversion"]["conversion_factor"] if is_toggled("use_currency_conversion") else 1) if value_column is not None else 0
+        stats["platform_payed"][platform] = pd.to_numeric(payed_values, errors="coerce").fillna(0).sum() if payed_column is not None else 0
+
+    return stats
 
 def get_color(name, default):
     if active_settings is None:
@@ -882,7 +968,8 @@ def get_export_status(export_format):
     if not source_path.exists():
         return "Master collection not found"
 
-    export_paths = [path for path in OUTPUT_DIR.glob(f"* Collection.{export_format}") if path != source_path]
+    export_folder = OUTPUT_DIR / export_format.upper()
+    export_paths = [path for path in export_folder.glob(f"* Collection.{export_format}") if path != source_path]
     if not export_paths:
         return "Not exported"
 
@@ -1688,16 +1775,22 @@ def open_column_export_window():
 
         ttk.Label(column_export_frame, text="Column",).grid(row=0, column=0, sticky="nw", padx=2)
         ttk.Label(column_export_frame, text="Width",).grid(row=0, column=1, sticky="nw", padx=2)
+        ttk.Label(column_export_frame, text="Align",).grid(row=0, column=2, sticky="nw", padx=2)
 
         for row, column in enumerate(ordered_columns, start=1):
             ttk.Label(column_export_frame, text=column,).grid(row=row, column=0, sticky="w", padx=2, pady=1)
 
-            width_var = tk.StringVar(value=str(column_export.get(column, 10)))
-            width_entry = ttk.Entry(column_export_frame, textvariable=width_var, width=6,)
+            width_var = tk.StringVar(value=str(column_export.get(column, {}).get("width", 10)))
+            width_entry = ttk.Entry(column_export_frame, textvariable=width_var, width=6)
             width_entry.grid(row=row, column=1, sticky="w", padx=2, pady=1)
+
+            align_var = tk.StringVar(value=column_export.get(column, {}).get("align", "left"))
+            align_menu = ttk.Combobox(column_export_frame, textvariable=align_var, values=("left", "center", "right"), state="readonly", width=7)
+            align_menu.grid(row=row, column=2, sticky="w", padx=2, pady=1)
+
             rem_btn = ttk.Button(column_export_frame, text="Remove", command=lambda c=column: rem_column(c),)
             rem_btn.configure(padding=0)
-            rem_btn.grid(row=row, column=2, sticky="w")
+            rem_btn.grid(row=row, column=3, sticky="w")
 
             def save_width(event=None, c=column, v=width_var):
                 if active_settings is None:
@@ -1708,10 +1801,23 @@ def open_column_export_window():
                     width = 10
 
                 v.set(str(width))
-                active_settings["column_export"][c] = width
+                active_settings["column_export"][c]["width"] = width
+
+            def save_align(event=None, c=column, v=align_var):
+                if active_settings is None:
+                    return
+
+                align = v.get()
+                if align not in ("left", "center", "right"):
+                    align = "left"
+
+                v.set(align)
+                active_settings["column_export"][c]["align"] = align
 
             width_entry.bind("<FocusOut>", save_width)
             width_entry.bind("<Return>", save_width)
+            align_menu.bind("<FocusOut>", save_align)
+            align_menu.bind("<Return>", save_align)
 
     def add_column():
         if active_settings is None:
@@ -1723,7 +1829,7 @@ def open_column_export_window():
             column = column_listbox.get(index)
 
             if column not in column_export:
-                column_export[column] = 10
+                column_export[column] = {"width": 10, "align": "left"}
 
         refresh_columns()
 
@@ -2142,6 +2248,34 @@ def populate_context_setup(frame, entries, row_idx, main_contextframe) -> int:
         child.grid_configure(padx=4, pady=4)
 
     return row_idx
+
+def populate_export_buttons(frame):
+    global export_status
+
+    export_formats = (
+        ("pdf", "Export as PDF"),
+        ("csv", "Export as CSV"),
+        ("tsv", "Export as TSV"),
+        ("xlsx", "Export as XLSX"),
+    )
+
+    def run_export(export_format):
+        export_collection(export_format)
+        update_export_statuses()
+
+    for column, (export_format, button_text) in enumerate(export_formats, start=1):
+        frame.columnconfigure(column, weight=1)
+
+        export_button = ttk.Button(frame, text=button_text, command=lambda fmt=export_format: run_export(fmt))
+        export_button.grid(row=0, column=column, sticky="ew", padx=4, pady=(0, 0))
+        export_button.configure(padding=0)
+
+        status_label = ttk.Label(frame, text=get_export_status(export_format), anchor="center")
+        status_label.grid(row=1, column=column, sticky="ew", padx=4, pady=(0, 2))
+
+        export_status[export_format] = status_label
+    
+    update_export_statuses()
 
 def populate_platform_defaults_list(frame, settings_keys):
     if active_settings is None:
@@ -3066,6 +3200,121 @@ def update_choices(contextentries = None, taxonomyentries = None, changes=False)
         populate_context_choices(frame, key)
     update_info_frame()
 
+def update_collection_pie_chart(chart_name, values, title=None):
+    global col_stats_graph_frame, col_stats_chart, col_stats_chart_data
+
+    if col_stats_graph_frame is None:
+        return
+    
+    col_stats_chart_data[chart_name] = (values, title)
+
+    chart_padding = 4
+    available_width = col_stats_graph_frame.winfo_width()
+    chart_width = max(1, (available_width - (CHARTS_PER_ROW + 1) * chart_padding) // CHARTS_PER_ROW)
+    chart_height = max(280, chart_width // 2)
+
+    chart_index = list(col_stats_chart_data).index(chart_name)
+    chart_row = chart_index // CHARTS_PER_ROW
+    chart_column = chart_index % CHARTS_PER_ROW
+
+    canvas = col_stats_chart.get(chart_name)
+    if canvas is None or not canvas.winfo_exists():
+        canvas = tk.Canvas(col_stats_graph_frame, width=chart_width, height=chart_height, background="white", highlightthickness=0)
+        col_stats_chart[chart_name] = canvas
+    else:
+        canvas.configure(width=chart_width)
+    canvas.grid(row=chart_row, column=chart_column, sticky="nsew", padx=chart_padding, pady=chart_padding)
+    canvas.delete("all")
+
+    chart_values = {}
+    for label, value in values.items():
+        numeric_value = float(value)
+        if numeric_value > 0:
+            chart_values[str(label)] = numeric_value
+
+    chart_width = int(canvas.cget("width"))
+    chart_height = int(canvas.cget("height"))
+
+    if not chart_values:
+        canvas.create_text(chart_width // 2, chart_height // 2, text="No collection data", anchor="center")
+        return
+
+    total = sum(chart_values.values())
+    title_space = 30
+    vertical_padding = 20
+    left_margin = 20
+    legend_gap = 25
+    legend_width = chart_width // 2
+
+    available_pie_width = (chart_width - left_margin - legend_gap - legend_width)
+    available_pie_height = chart_height - title_space - vertical_padding
+
+    chart_size = max(1, min(available_pie_width, available_pie_height))
+
+    chart_left = left_margin
+    chart_top = title_space + (available_pie_height - chart_size) // 2
+    chart_right = chart_left + chart_size
+    chart_bottom = chart_top + chart_size
+
+    colors = (
+        "#3F5F73",
+        "#D97757",
+        "#6A9A8B",
+        "#C6A15B",
+        "#7A6FA8",
+        "#4F86A8",
+        "#B35C75",
+        "#759C5E",
+    )
+
+    if title:
+        canvas.create_text(chart_width // 4, 20, text=title, anchor="center")
+
+    start_angle = 90
+    legend_x = chart_right + 25
+    legend_y = 25
+    canvas_tooltips = []
+
+    for index, (label, value) in enumerate(chart_values.items()):
+        slice_angle = value / total * 360
+        slice_color = colors[index % len(colors)]
+        percentage = value / total * 100
+
+        arc_id = canvas.create_arc(chart_left, chart_top, chart_right, chart_bottom, start=start_angle, extent=-slice_angle, fill=slice_color, outline="white", width=1)
+        canvas_tooltips.append(CanvasTooltip(canvas, arc_id, text=f"{label}: {value:,.1f} ({percentage:.1f}%)"))
+
+        canvas.create_rectangle(legend_x, legend_y - 7, legend_x + 12, legend_y + 5, fill=slice_color, outline=slice_color)
+        canvas.create_text(legend_x + 18, legend_y, text=f"{label}: {value:,.1f} ({percentage:.1f}%)", anchor="w")
+
+        legend_y += 24
+        start_angle -= slice_angle
+
+def update_collection_stats():
+    stats = get_collection_stats()
+    update_collection_pie_chart("platform_titles", stats["platform_titles"], title="Titles by Platform")
+    update_collection_pie_chart("platform_payed", stats["platform_payed"], title="Payed by Platform")
+    update_collection_pie_chart("platform_value", stats["platform_value"], title="Value by Platform")
+
+    if "titles" in collection_stats_labels:
+        collection_stats_labels["titles"].configure(text=f"Titles: {stats['titles']:,}")
+
+    if "platforms" in collection_stats_labels:
+        collection_stats_labels["platforms"].configure(text=f"Platforms: {stats['platforms']:,}")
+
+    if "payed" in collection_stats_labels:
+        collection_stats_labels["payed"].configure(text=f"Total Payed: {stats['payed']:,.2f}")
+
+    if "value" in collection_stats_labels:
+        collection_stats_labels["value"].configure(text=f"Total Value: {stats['value']:,.2f}")
+
+def update_export_statuses():
+    global export_status
+
+    for export_format, status_label in export_status.items():
+        status_label.configure(text=get_export_status(export_format))
+
+    return export_status
+
 def update_info_choice(key, value):
     global active_title, active_perspective
     selected_value = value if isinstance(value, str) else value.get()
@@ -3431,6 +3680,7 @@ def write_new_headers(data, existing_data: pd.DataFrame):
     return combined, new_reindexed
 
 def write_to_file(data, platform):
+    global export_status
     if active_settings is None:
         return
 
@@ -3467,6 +3717,9 @@ def write_to_file(data, platform):
         combined.to_excel(writer, sheet_name=platform, index=False)
 
     color_scanned_collection(file_name, platform)
+    update_collection_stats()
+    if export_status:
+        update_export_statuses()
 
     if clipboard:
         pyperclip.copy(new_reindexed.to_csv(sep='\t', index=False, header=False))
@@ -3474,6 +3727,7 @@ def write_to_file(data, platform):
 def main():
     global infoframe, searchentry, logframe, logtree, acceptbutton, declinebutton, contextlist
     global app_root, thumbnail_label, thumbnail_image, thumbnail_tooltip, thumbnail_refresh_btn, contextframe
+    global col_stats_chart, col_stats_graph_frame, collection_stats_labels
     if active_settings is None:
         handle_error("No settings available.")
         return
@@ -3494,12 +3748,14 @@ def main():
     style.configure("InfoDataOdd.TLabel", background=odd_bg)
 
     modified_color = get_color("taxonomy_modified", "#FFCC66")
-    normal_color = "#e0e0e0"
 
     style.configure("ModifiedInfoDataEven.TLabel", background=modified_color, foreground="#000000")
     style.configure("ModifiedInfoDataOdd.TLabel", background=modified_color, foreground="#000000")
     style.configure("ModifiedTaxonomy.TMenubutton", background=modified_color, foreground="#000000", lightcolor=modify_color(modified_color, 0.2), darkcolor=modify_color(modified_color, -0.1), bordercolor=modify_color(modified_color, -0.2))
     style.map("ModifiedTaxonomy.TMenubutton", background=[("active", modified_color), ("pressed", modified_color), ("!disabled", modified_color)])
+
+    style.configure("SelectColumns.TButton", background=modified_color, foreground="#000000", lightcolor=modify_color(modified_color, 0.3), darkcolor=modify_color(modified_color, -0.1), bordercolor=modify_color(modified_color, -0.2), padding=0, relief="raised")
+    style.map("SelectColumns.TButton", background=[("active", modify_color(modified_color, -0.05)), ("pressed", modified_color), ("!disabled", modified_color)])
 
     main_notebook = ttk.Notebook(root)
     main_notebook.grid(row=0, column=0, sticky="nsew", padx=4, pady=4)
@@ -3724,16 +3980,8 @@ def main():
     col_loc_btn.grid(row=0, column=2, sticky="ew")
     col_loc_btn.configure(padding=0)
 
-    col_exp_status_frame = ttk.LabelFrame(col_tab, padding="4", text="Collection Export Status")
-    col_exp_status_frame.grid(row=1, column=0, sticky="ew", pady=4)
-    col_exp_status_frame.columnconfigure(1, weight=1)
-
-    col_exp_status_label = ttk.Label(col_exp_status_frame, text="Status:")
-    col_exp_status_label.grid(row=0, column=0, sticky="w")
-    col_exp_status_value = ttk.Label(col_exp_status_frame, text=get_collection_status())
-    col_exp_status_value.grid(row=0, column=1, sticky="w", padx=4)
-
-    col_exp_frame = ttk.Frame(col_exp_status_frame, padding="4", relief="groove")
+    # Export Frame
+    col_exp_frame = ttk.LabelFrame(col_tab, padding="4", text="Export", relief="raised")
     col_exp_frame.grid(row=1, column=0, columnspan=2, sticky="ew", pady=4)
     col_exp_frame.columnconfigure(0, weight=1)
     col_exp_frame.columnconfigure(1, weight=1)
@@ -3741,26 +3989,45 @@ def main():
     col_exp_frame.columnconfigure(3, weight=1)
     col_exp_frame.columnconfigure(4, weight=1)
 
-    col_exp_col_select_btn = ttk.Button(col_exp_frame, text="Select Columns", command=lambda: open_column_export_window())
-    col_exp_col_select_btn.grid(row=1, column=0, sticky="ew")
-    col_exp_col_select_btn.configure(padding=0)
+    # Select Columns Button
+    col_exp_col_select_btn = ttk.Button(col_exp_frame, text="Select Columns", command=lambda: open_column_export_window(), style="SelectColumns.TButton")
+    col_exp_col_select_btn.grid(row=0, column=0, sticky="ew")
 
-    col_exp_pdf_btn = ttk.Button(col_exp_frame, text="Export as PDF", command=lambda: export_collection("pdf"))
-    col_exp_pdf_btn.grid(row=1, column=1, sticky="ew")
-    col_exp_pdf_btn.configure(padding=0)
+    # Export Buttons
+    populate_export_buttons(col_exp_frame)
 
-    col_exp_csv_btn = ttk.Button(col_exp_frame, text="Export as CSV", command=lambda: export_collection("csv"))
-    col_exp_csv_btn.grid(row=1, column=2, sticky="ew")
-    col_exp_csv_btn.configure(padding=0)
+    # Collection Stats Frame
+    col_exp_stats = ttk.LabelFrame(col_tab, padding="4", text="Collection Stats", relief="raised")
+    col_exp_stats.grid(row=2, column=0, columnspan=5, sticky="ew", pady=2)
+    col_exp_stats.columnconfigure(0, weight=1)
 
-    col_exp_tsv_btn = ttk.Button(col_exp_frame, text="Export as TSV", command=lambda: export_collection("tsv"))
-    col_exp_tsv_btn.grid(row=1, column=3, sticky="ew")
-    col_exp_tsv_btn.configure(padding=0)
+    collection_stats_labels.clear()
 
-    col_exp_xls_btn = ttk.Button(col_exp_frame, text="Export as XLS", command=lambda: export_collection("xls"))
-    col_exp_xls_btn.grid(row=1, column=4, sticky="ew")
-    col_exp_xls_btn.configure(padding=0)
+    stats_definitions = (
+        ("titles", "Titles: 0"),
+        ("platforms", "Platforms: 0"),
+        ("payed", "Total Payed: 0.00"),
+        ("value", "Total Value: 0.00"),
+    )
 
+    for column, (stat_name, initial_text) in enumerate(stats_definitions):
+        stat_label = ttk.Label(col_exp_stats, text=initial_text, anchor="center")
+        stat_label.grid(row=0, column=column, sticky="ew", padx=8, pady=4)
+        col_exp_stats.columnconfigure(column, weight=1)
+        collection_stats_labels[stat_name] = stat_label
+
+    col_stats_graph_frame = ttk.Frame(col_exp_stats, relief="sunken")
+    col_stats_graph_frame.grid(row=1, column=0, columnspan=len(stats_definitions), sticky="ew", padx=2, pady=2)
+    col_stats_graph_frame.columnconfigure(0, weight=1)
+
+    for column in range(CHARTS_PER_ROW):
+        col_stats_graph_frame.columnconfigure(column, weight=1)
+
+    def handle_tab_changed(event):
+        update_choices(contextentries, taxonomyentries)
+
+        if event.widget.select() == str(col_tab):
+            update_collection_stats()
 
     main_notebook.add(mainframe, text="Main")
     main_notebook.add(setup_tab, text="Setup")
@@ -3787,7 +4054,7 @@ def main():
     if searchentry is not None:
         root.bind_all('<Control-a>', button_select_all)
 
-    main_notebook.bind("<<NotebookTabChanged>>", lambda event: update_choices(contextentries, taxonomyentries))
+    main_notebook.bind("<<NotebookTabChanged>>", handle_tab_changed)
 
     # Get the shortcuts and bind them, with and without shift if applicable
     shortcuts = active_settings.get("shortcuts", {}) if active_settings else {}

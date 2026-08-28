@@ -35,3 +35,44 @@ class Tooltip:
         if self._tooltipwindow:
             self._tooltipwindow.destroy()
             self._tooltipwindow = None
+
+class CanvasTooltip:
+    """Tooltip that shows some text on a canvas item"""
+    def __init__(self, canvas, item_id, text, delay=500, wraplength=400):
+        self.canvas = canvas
+        self.item_id = item_id
+        self.text = str(text)
+        self.delay = delay
+        self.wraplength = wraplength
+        self.after_id = None
+        self.window = None
+
+        canvas.tag_bind(item_id, "<Enter>", self._schedule)
+        canvas.tag_bind(item_id, "<Leave>", self._hide)
+        canvas.tag_bind(item_id, "<ButtonPress>", self._hide)
+
+    def _schedule(self, event):
+        self.after_id = self.canvas.after(self.delay, lambda: self._show(event))
+
+    def _show(self, event):
+        if self.window is not None:
+            return
+
+        x = event.x_root + 12
+        y = event.y_root + 12
+
+        self.window = tk.Toplevel(self.canvas)
+        self.window.wm_overrideredirect(True)
+        self.window.wm_geometry(f"+{x}+{y}")
+
+        label = tk.Label(self.window, text=self.text, background="#ffffe0", relief="solid", borderwidth=1, justify="left", wraplength=self.wraplength)
+        label.pack(ipadx=4, ipady=2)
+
+    def _hide(self, event=None):
+        if self.after_id is not None:
+            self.canvas.after_cancel(self.after_id)
+            self.after_id = None
+
+        if self.window is not None:
+            self.window.destroy()
+            self.window = None

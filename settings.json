@@ -485,25 +485,76 @@
         ],
         "XBOX360": [
             "Format"
+        ],
+        "PS4": [
+            "Format"
         ]
     },
     "column_export": {
-        "Title": 50,
-        "Release Date": 4,
-        "Case": 1,
-        "Sleeve": 1,
-        "Manual": 1,
-        "Condition": 18,
-        "Case Condition": 10,
-        "Format": 9,
-        "Edition": 10,
-        "Developer": 20,
-        "Payed": 5,
-        "Value": 7,
-        "UPC": 13,
-        "URL": 10,
-        "Price URL": 13,
-        "Gameplay URL": 10
+        "Title": {
+            "width": 50,
+            "align": "left"
+        },
+        "Release Date": {
+            "width": 4,
+            "align": "center"
+        },
+        "Case": {
+            "width": 1,
+            "align": "center"
+        },
+        "Sleeve": {
+            "width": 1,
+            "align": "center"
+        },
+        "Manual": {
+            "width": 1,
+            "align": "center"
+        },
+        "Condition": {
+            "width": 18,
+            "align": "left"
+        },
+        "Case Condition": {
+            "width": 10,
+            "align": "left"
+        },
+        "Format": {
+            "width": 9,
+            "align": "left"
+        },
+        "Edition": {
+            "width": 10,
+            "align": "left"
+        },
+        "Developer": {
+            "width": 20,
+            "align": "left"
+        },
+        "Payed": {
+            "width": 5,
+            "align": "right"
+        },
+        "Value": {
+            "width": 7,
+            "align": "right"
+        },
+        "UPC": {
+            "width": 13,
+            "align": "left"
+        },
+        "URL": {
+            "width": 10,
+            "align": "center"
+        },
+        "Price URL": {
+            "width": 13,
+            "align": "center"
+        },
+        "Gameplay URL": {
+            "width": 10,
+            "align": "center"
+        }
     },
     "symbols": {
         "yes": "Y",
@@ -698,7 +749,8 @@
         "use_dx_point_drop": true,
         "use_pal": true,
         "use_taxonomy": true,
-        "use_playercount_split": true
+        "use_playercount_split": true,
+        "use_currency_conversion": true
     },
     "toggle_descriptions": {
         "use_dx_point_drop": "Drop the decimal points from DirectX version numbers. So DX8.1 becomes DX8, for example.",
@@ -710,7 +762,11 @@
         "use_full_platform_name": "Save the full platform name instead of the key in the output.",
         "use_pal": "Prefer PAL platform names when scraping prices.",
         "use_taxonomy": "Enable taxonomy fields.",
-        "use_playercount_split": "Split player taxonomy (SP/Hotseat/MP/Coop) into separate columns."
+        "use_playercount_split": "Split player taxonomy (SP/Hotseat/MP/Coop) into separate columns.",
+        "use_currency_conversion": "Convert the value field using the specifiedconversion factor."
+    },
+    "currency_conversion": {
+        "conversion_factor": 6.44
     },
     "theming": {
         "ttk_theme": "clam",

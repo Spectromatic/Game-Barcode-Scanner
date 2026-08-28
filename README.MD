@@ -13,6 +13,7 @@ Since mobygames disallowed scraping, it now uses its own internal databases to f
 - Requests
 - Openpyxl
 - Pyperclip
+- Reportlab
 
 ## Runtime Requirements
 
