@@ -1,6 +1,6 @@
 {
     "platforms": {
-        "PC": "Windows",
+        "PC": "PC",
         "PS1": "PlayStation",
         "PS2": "PlayStation 2",
         "PS3": "PlayStation 3",
@@ -723,6 +723,28 @@
             "theme": 19,
             "objective": 6,
             "gameplay": 34,
+            "type": 0
+        },
+        "PC": {
+            "formats": 1,
+            "conditions": 3,
+            "case_conditions": 0,
+            "contents": 0,
+            "editions": 0,
+            "release_range": 5,
+            "player": 0,
+            "style": 3,
+            "dimension": 3,
+            "time": 0,
+            "perspective": 0,
+            "progression": 2,
+            "movement": 0,
+            "tone": 15,
+            "era": 12,
+            "setting": 15,
+            "theme": 29,
+            "objective": 8,
+            "gameplay": 35,
             "type": 0
         }
     },

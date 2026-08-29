@@ -669,6 +669,9 @@ def game_accept():
     selected_title = active_game_data.get('title', '').strip() if active_game_data.get('title') else ''
     selected_platform = get_platform_key()
     selected_contents = get_contents()
+
+    if selected_title and not active_source_game_data:
+        active_game_is_new = True
     
     # Move the "The" to the end if the title starts with "The " and it's enabled in settings
     if selected_title.startswith("The ") and is_toggled('use_the_suffix'):
@@ -2665,61 +2668,6 @@ def rotated_text_image(text, font_size=12, font_path=None):
     img = img.rotate(-90, expand=True)
     return ImageTk.PhotoImage(img)
 
-def scrape_min_os(soup, dict={}, os=None):
-    os_spec = soup.find('td', string='Minimum OS Class Required:')
-    
-    if os_spec is None:
-        print("Debug: Minimum OS Class not found.")
-        return None
-    
-    if active_settings is None:
-        return None
-    
-    if os is None:
-        return None
-
-    # List of operating systems
-    os_to_check = get_os_versions()
-    os_list = []
-    os_version = os_spec.find_next_sibling('td').text.strip()
-    os_version = os_version.replace(get_os_prefix(), "")
-    print(f"Debug: Found OS Version: {os_version}")
-    os_list.append(os_version)
-    
-    # Create a list with each OS and 'Y' or 'N' depending on whether it was found
-    # Any OS later will be set to TBD
-    found_y = False
-    for os in os_to_check:
-        if os not in os_list and not found_y:
-            dict[os] = 'N'
-            continue
-        if not found_y:
-            dict[os] = 'Y'
-            found_y = True
-            continue
-        dict[os] = 'TBD'
-
-    return dict
-
-def scrape_dx(specs, dict={}):
-    dx_spec = specs.find('td', string='Minimum DirectX Version Required:')
-
-    if dx_spec is None:
-        print("Debug: Minimum DirectX Version not found.")
-        return None
-
-    if dx_spec:
-        dx_version = dx_spec.find_next_sibling('td').text.strip()
-        #Strip everything that isn't or anything after the version number
-        dx_version = re.search(r'\d+(\.\d+)?[a-zA-Z]*$', dx_version)
-        dx_version = dx_version.group() if dx_version else None
-
-        if dx_version and active_settings and is_toggled("use_dx_point_drop"):
-            dx_version = re.sub(r'\..*$', '', dx_version)
-
-        print(f"Debug: DirectX Version: {dx_version}")
-        dict['DX'] = 'DX' + dx_version if dx_version else 'Unknown'
-
 def scrape_pricecharting_img(soup, force=False):
     if soup is None:
         return None
@@ -2774,6 +2722,7 @@ def scrape_pricecharting_price(query, known_url=None):
     price_soup = None
     big_soup = None
     product_page = False
+    response_url = None
 
     if is_upc(query) and known_url is None:
         search_url = f"https://www.pricecharting.com/search-products?type=prices&q={query}"
@@ -2787,7 +2736,10 @@ def scrape_pricecharting_price(query, known_url=None):
         search_url = known_url
 
     if price_soup is None:
-        product_page, price_soup, big_soup, response_url = get_specific_soup_by_id(search_url, "table", "price_data", known_soup=big_soup)
+        product_page, price_soup, big_soup, product_response_url = get_specific_soup_by_id(search_url, "table", "price_data", known_soup=big_soup)
+
+    # Ensure that the redirected URL is used if available
+    response_url = response_url or product_response_url
 
     if known_url is None:
         print(f"Debug: Search URL: {search_url}")
@@ -2810,19 +2762,52 @@ def scrape_pricecharting_price(query, known_url=None):
 
     if product_page:
         platform_row = price_soup
-
         item_link = response_url
+        price = None
+        price_labels = {}
+
+        full_prices = big_soup.find("div", id="full-prices") if big_soup else None
+        # Use the full prices section if available, otherwise fall back to the price row
+        if full_prices is None:
+            if sealed:
+                price_cell_id = "new_price"
+            elif loose:
+                price_cell_id = "used_price"
+            else:
+                price_cell_id = "complete_price"
+    
+            price_cell = price_soup.find("td", id=price_cell_id)
+            price_span = price_cell.find("span", class_="price") if price_cell else None
+            price = price_span.get_text(" ", strip=True) if price_span else None
+    
+            return price, item_link
+        
+        for row in full_prices.find_all("tr"):
+            cells = row.find_all("td")
+            if len(cells) < 2:
+                continue
+
+            label = cells[0].get_text(" ", strip=True).casefold()
+            value = cells[1].get_text(" ", strip=True)
+            if value != "-":
+                price_labels[label] = value
 
         if sealed:
-            price_cell_id = "new_price"
-        elif loose:
-            price_cell_id = "used_price"
+            price_label = "new"
         else:
-            price_cell_id = "complete_price"
+            content_value = str(contents or "").casefold()
 
-        price_cell = price_soup.find("td", id=price_cell_id)
-        price_span = price_cell.find("span", class_="price") if price_cell else None
-        price = price_span.get_text(" ", strip=True) if price_span else None
+            price_label = {
+                "cib": "complete",
+                "no manual": "item & box",
+                "no case": "item & manual",
+                "manual only": "manual only",
+                "case only": "box only",
+                "loose disc": "loose",
+                "nothing": "loose",
+            }.get(content_value, "complete")
+
+        price = price_labels.get(price_label)
 
         return price, item_link
 
@@ -2909,28 +2894,6 @@ def scrape_pricecharting_price(query, known_url=None):
         price = price_text
 
     return (price if price else None, item_link)
-
-def scrape_specs(game_url, os=None):
-    game_url = f"{game_url}/specs"
-    response = get_response(game_url)
-    if response is None:
-        return None
-    soup = bs.BeautifulSoup(response.text, 'html.parser')
-    
-    specs = soup.find('table', class_='table table-nowrap text-sm')
-
-    if specs is None:
-        print("Debug: No specs table found.")
-        return None
-
-    scraped_specs = {}
-    scraped_specs = scrape_min_os(specs, scraped_specs, os) or scraped_specs
-    scraped_specs = scrape_dx(specs, scraped_specs) or scraped_specs
-
-    if scraped_specs is not None:
-        print(f"Debug: Specs: {scraped_specs}")
-
-    return scraped_specs
 
 def scrape_for_dt(soup, text):
     element = soup.find('dt', string=text)
@@ -3118,11 +3081,11 @@ def selections_update(name, value):
     if name in ("conditions", "contents"):
         new_condition = str(active_contexts.get("conditions") or "").casefold()
         new_content = str(active_contexts.get("contents") or "").casefold()
-        should_refetch = (name == "conditions" and (("sealed" in new_condition and "sealed" not in old_condition) or ("sealed" in old_condition and "sealed" not in new_condition))) or (name == "contents" and (("loose" in new_content and "loose" not in old_content) or ("loose" in old_content and "loose" not in new_content)))
+        should_refetch = (name == "conditions" and (("sealed" in new_condition and "sealed" not in old_condition) or ("sealed" in old_condition and "sealed" not in new_condition))) or new_content != old_content
         price = None
         if should_refetch and (active_game_data.get("title") != "" or active_game_data.get("upc") != ""):
             print(f"Debug: Refetching prices due to change in condition/content. Old Condition: {old_condition}, New Condition: {new_condition}, Old Content: {old_content}, New Content: {new_content}")
-            price, _ = scrape_pricecharting_price(active_game_data.get("upc") or active_game_data.get("title", ""))
+            price, _ = scrape_pricecharting_price(active_game_data.get("upc") or active_game_data.get("title", ""), known_url=active_game_data.get("price_url", None))
 
         if price is not None:
             active_contexts["price"] = price
