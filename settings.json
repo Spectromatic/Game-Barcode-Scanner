@@ -778,6 +778,10 @@
         "use_playercount_split": "Split player taxonomy (SP/Hotseat/MP/Coop) into separate columns.",
         "use_currency_conversion": "Convert the value field using the specifiedconversion factor."
     },
+    "export_sort": {
+        "column": "Title",
+        "order": "ascending"
+    },
     "currency_conversion": {
         "conversion_factor": 6.44
     },

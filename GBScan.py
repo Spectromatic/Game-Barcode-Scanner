@@ -225,6 +225,21 @@ def export_collection(export_format: str):
 
         export_data = data.loc[:, selected_columns]
 
+        # Apply export sorting if specified in the settings.
+        sort_column = active_settings.get("export_sort", {}).get("column", "Title")
+        sort_order = active_settings.get("export_sort", {}).get("order", "ascending")
+
+        if sort_column in export_data.columns:
+            ascending = sort_order != "descending"
+
+            # Treat numeric-looking columns numerically instead of alphabetically.
+            numeric_values = pd.to_numeric(export_data[sort_column].astype(str).str.strip().str.replace("$", "", regex=False).str.replace(",", "", regex=False), errors="coerce")
+
+            if numeric_values.notna().any():
+                export_data = (export_data.assign(_export_sort_value=numeric_values).sort_values("_export_sort_value", ascending=ascending, na_position="last", kind="stable").drop(columns="_export_sort_value"))
+            else:
+                export_data = export_data.sort_values(sort_column, ascending=ascending, na_position="last", kind="stable", key=lambda values: values.astype(str).str.casefold())
+
         if export_format == "tsv":
             tsv_folder = OUTPUT_DIR / "TSV"
             tsv_folder.mkdir(parents=True, exist_ok=True)
@@ -2351,7 +2366,7 @@ def populate_context_setup(frame, entries, row_idx, main_contextframe) -> int:
 
     return row_idx
 
-def populate_export_buttons(frame):
+def populate_export_buttons(frame, row=0):
     global export_status
 
     export_formats = (
@@ -2369,11 +2384,11 @@ def populate_export_buttons(frame):
         frame.columnconfigure(column, weight=1)
 
         export_button = ttk.Button(frame, text=button_text, command=lambda fmt=export_format: run_export(fmt))
-        export_button.grid(row=0, column=column, sticky="ew", padx=4, pady=(0, 0))
+        export_button.grid(row=row, column=column, sticky="ew", padx=4, pady=(0, 0))
         export_button.configure(padding=0)
 
         status_label = ttk.Label(frame, text=get_export_status(export_format), anchor="center")
-        status_label.grid(row=1, column=column, sticky="ew", padx=4, pady=(0, 2))
+        status_label.grid(row=row+1, column=column, sticky="ew", padx=4, pady=(0, 2))
 
         export_status[export_format] = status_label
     
@@ -4091,16 +4106,38 @@ def main():
     col_exp_frame.columnconfigure(3, weight=1)
     col_exp_frame.columnconfigure(4, weight=1)
 
+    def save_export_sort():
+        if active_settings:
+            active_settings.setdefault("export_sort", {}).update({"column": sort_column_var.get(), "order": sort_order_var.get(),})
+        settings_save()
+
+    sort_frame = ttk.Frame(col_exp_frame)
+    sort_frame.grid(row=0, column=0, columnspan=5, sticky="ew", pady=(0, 4))
+    sort_column_var = tk.StringVar(value=active_settings.setdefault("export_sort", {}).get("column", "Title"))
+    sort_order_var = tk.StringVar(value=active_settings.setdefault("export_sort", {}).get("order", "ascending"))
+
+    ttk.Label(sort_frame, text="Sort by:").grid(row=0, column=0, sticky="e", padx=(4, 2), pady=4)
+    sort_column_menu = ttk.Combobox(sort_frame, textvariable=sort_column_var, values=list(active_settings.get("column_export", {}).keys()), state="readonly", height=20)
+    sort_column_menu.grid(row=0, column=1, sticky="ew", padx=2, pady=4)
+
+    ttk.Label(sort_frame, text="Order:").grid(row=0, column=2, sticky="e", padx=(4, 2), pady=4)
+    sort_order_menu = ttk.OptionMenu(sort_frame, sort_order_var, sort_order_var.get(), "ascending", "descending")
+    sort_order_menu.grid(row=0, column=3, sticky="ew", padx=2, pady=4)
+    sort_order_menu.configure(padding=0)
+
+    sort_column_menu.bind("<<ComboboxSelected>>", lambda e: save_export_sort())
+    sort_order_menu.bind("<<ComboboxSelected>>", lambda e: save_export_sort())
+
     # Select Columns Button
     col_exp_col_select_btn = ttk.Button(col_exp_frame, text="Select Columns", command=lambda: open_column_export_window(), style="SelectColumns.TButton")
-    col_exp_col_select_btn.grid(row=0, column=0, sticky="ew")
+    col_exp_col_select_btn.grid(row=1, column=0, sticky="ew")
 
     # Export Buttons
-    populate_export_buttons(col_exp_frame)
+    populate_export_buttons(col_exp_frame, row=1)
 
     # Collection Stats Frame
     col_exp_stats = ttk.LabelFrame(col_tab, padding="4", text="Collection Stats", relief="raised")
-    col_exp_stats.grid(row=2, column=0, columnspan=5, sticky="ew", pady=2)
+    col_exp_stats.grid(row=3, column=0, columnspan=5, sticky="ew", pady=2)
     col_exp_stats.columnconfigure(0, weight=1)
 
     collection_stats_labels.clear()
@@ -4156,7 +4193,6 @@ def main():
 
     def handle_tab_changed(event):
         update_choices(contextentries, taxonomyentries)
-
         if event.widget.select() == str(col_tab):
             update_collection_stats()
 
