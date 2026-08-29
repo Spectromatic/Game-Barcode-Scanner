@@ -259,6 +259,7 @@ def export_pdfs(platform, data, pdf_folder):
         return
 
     export_colors = active_settings.get("theming", {}).get("export_colors", {})
+    export_gradients = active_settings.get("theming", {}).get("export_gradients", {})
 
     data = data.fillna("")
 
@@ -374,17 +375,27 @@ def export_pdfs(platform, data, pdf_folder):
                         (column_index, row_index),
                         no_background,
                     ))
+
+            # Apply export gradient if available
+            gradient_color = get_color_export_gradient(data.columns[column_index], value, data, export_gradients)
+            if gradient_color is not None:
+                table_style_commands.append((
+                    "BACKGROUND",
+                    (column_index, row_index),
+                    (column_index, row_index),
+                    gradient_color,
+                ))
+
+            # Apply export color if available
             color_key = get_color_export(data.columns[column_index], value)
             export_color = export_colors.get(color_key)
             if export_color is None:
                 continue
-
-            export_color = colors.HexColor(export_color)
             table_style_commands.append((
                     "BACKGROUND",
                     (column_index, row_index),
                     (column_index, row_index),
-                    export_color,
+                    colors.HexColor(export_color),
                 ))
             
     for column_index, column in enumerate(data.columns):
@@ -895,6 +906,69 @@ def get_color_export(column, value):
     value = value.strip("_")
 
     return f"{column}_{value}"
+
+def get_color_export_gradient(column, value, data, export_gradients):
+    column_key = get_color_export(column, "start").removesuffix("_start")
+
+    start_hex = export_gradients.get(f"{column_key}_start")
+    median_hex = export_gradients.get(f"{column_key}_mean")
+    end_hex = export_gradients.get(f"{column_key}_end")
+
+    if not start_hex or not end_hex:
+        return None
+
+    numeric_values = pd.to_numeric(data[column].astype(str).str.strip().str.replace("$", "", regex=False).str.replace(",", "", regex=False), errors="coerce").dropna()
+    if numeric_values.empty:
+        return None
+
+    numeric_value = pd.to_numeric(str(value).strip().replace("$", "").replace(",", ""), errors="coerce")
+    if pd.isna(numeric_value):
+        return None
+
+    minimum = numeric_values.min()
+    maximum = numeric_values.max()
+
+    start_color = colors.HexColor(start_hex)
+    end_color = colors.HexColor(end_hex)
+
+    if not median_hex:
+        # Direct start-to-end gradient when the middle color is omitted.
+        position = (numeric_value - minimum) / (maximum - minimum) if maximum != minimum else 0.0
+        position = max(0.0, min(1.0, position))
+
+        return colors.Color(
+            start_color.red + (end_color.red - start_color.red) * position,
+            start_color.green + (end_color.green - start_color.green) * position,
+            start_color.blue + (end_color.blue - start_color.blue) * position,
+        )
+
+    # Three-color gradient using the platform-specific median.
+    median_color = colors.HexColor(median_hex)
+    median = numeric_values.median()
+
+    if minimum == maximum:
+        position = 0.5
+    elif numeric_value <= median:
+        position = 0.5 * (numeric_value - minimum) / max(median - minimum, 1e-12)
+    else:
+        position = 0.5 + 0.5 * (numeric_value - median) / max(maximum - median, 1e-12)
+
+    position = max(0.0, min(1.0, position))
+
+    if position <= 0.5:
+        first_color = start_color
+        second_color = median_color
+        local_position = position * 2
+    else:
+        first_color = median_color
+        second_color = end_color
+        local_position = (position - 0.5) * 2
+
+    return colors.Color(
+        first_color.red + (second_color.red - first_color.red) * local_position,
+        first_color.green + (second_color.green - first_color.green) * local_position,
+        first_color.blue + (second_color.blue - first_color.blue) * local_position,
+    )
 
 def get_columns_to_drop(platform):
     if active_settings is None:

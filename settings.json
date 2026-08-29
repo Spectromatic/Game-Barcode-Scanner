@@ -802,16 +802,20 @@
             "taxonomy_modified": "#FFCC66",
             "yes": "#AAEEAA",
             "no": "#EE9999",
-            "export_border": "#000000",
-            "gradient_start": "#B2FFBC",
-            "gradient_middle": "#FFEFB2",
-            "gradient_end": "#FFB2B2"
+            "export_border": "#000000"
         },
         "export_colors": {
             "condition_sealed": "#B2EFFF",
             "condition_moderate_scratches": "#FFEFB2",
             "condition_heavy_scratches": "#FFD1B2",
             "condition_extreme_scratches": "#FFB2B2"
+        },
+        "export_gradients": {
+            "value_start": "#B2FFBC",
+            "value_mean": "#FFEFB2",
+            "value_end": "#FFB2B2",
+            "release_date_start": "#76BFD0",
+            "release_date_end": "#C5E4EB"
         }
     },
     "shortcuts": {
