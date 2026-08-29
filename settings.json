@@ -481,12 +481,21 @@
             "Format"
         ],
         "PSP": [
-            "Hotseat"
+            "Hotseat",
+            "Format"
         ],
         "XBOX360": [
             "Format"
         ],
         "PS4": [
+            "Format"
+        ],
+        "DS": [
+            "Condition",
+            "Format"
+        ],
+        "3DS": [
+            "Condition",
             "Format"
         ]
     },
@@ -524,7 +533,7 @@
             "align": "left"
         },
         "Edition": {
-            "width": 10,
+            "width": 16,
             "align": "left"
         },
         "Developer": {
@@ -538,6 +547,10 @@
         "Value": {
             "width": 7,
             "align": "right"
+        },
+        "Added": {
+            "width": 10,
+            "align": "center"
         },
         "UPC": {
             "width": 13,
@@ -789,7 +802,16 @@
             "taxonomy_modified": "#FFCC66",
             "yes": "#AAEEAA",
             "no": "#EE9999",
-            "export_border": "#000000"
+            "export_border": "#000000",
+            "gradient_start": "#B2FFBC",
+            "gradient_middle": "#FFEFB2",
+            "gradient_end": "#FFB2B2"
+        },
+        "export_colors": {
+            "condition_sealed": "#B2EFFF",
+            "condition_moderate_scratches": "#FFEFB2",
+            "condition_heavy_scratches": "#FFD1B2",
+            "condition_extreme_scratches": "#FFB2B2"
         }
     },
     "shortcuts": {

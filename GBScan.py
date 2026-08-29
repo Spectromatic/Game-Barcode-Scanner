@@ -258,6 +258,8 @@ def export_pdfs(platform, data, pdf_folder):
         handle_error("No columns have been selected for PDF export.")
         return
 
+    export_colors = active_settings.get("theming", {}).get("export_colors", {})
+
     data = data.fillna("")
 
     styles = getSampleStyleSheet()
@@ -354,45 +356,50 @@ def export_pdfs(platform, data, pdf_folder):
         row_background = even_background if row_index % 2 == 1 else odd_background
         table_style_commands.append(("BACKGROUND", (0, row_index), (-1, row_index), row_background))
 
-    for row_index, row in enumerate(data.itertuples(index=False, name=None), start=1,):
+    for row_index, row in enumerate(data.itertuples(index=False, name=None), start=1):
         for column_index, value in enumerate(row):
-            value_text = str(value).strip().casefold()
+            value_text = handle_normalized_text(value)
 
             if value_text == yes_symbol:
-                table_style_commands.append(
-                    (
+                table_style_commands.append((
                         "BACKGROUND",
                         (column_index, row_index),
                         (column_index, row_index),
                         yes_background,
-                    )
-                )
+                    ))
             elif value_text == no_symbol:
-                table_style_commands.append(
-                    (
+                table_style_commands.append((
                         "BACKGROUND",
                         (column_index, row_index),
                         (column_index, row_index),
                         no_background,
-                    )
-                )
+                    ))
+            color_key = get_color_export(data.columns[column_index], value)
+            export_color = export_colors.get(color_key)
+            if export_color is None:
+                continue
+
+            export_color = colors.HexColor(export_color)
+            table_style_commands.append((
+                    "BACKGROUND",
+                    (column_index, row_index),
+                    (column_index, row_index),
+                    export_color,
+                ))
+            
     for column_index, column in enumerate(data.columns):
         align = column_export[str(column)].get("align", "left")
 
-        if align not in ("left", "center", "right"):
-            align = "left"
-
-        table_style_commands.append(
-            (
+        table_style_commands.append((
                 "ALIGN",
                 (column_index, 0),
                 (column_index, -1),
                 align.upper(),
-            )
-        )
+            ))
 
     table.setStyle(TableStyle(table_style_commands))
-    document.build([Paragraph(escape(str(platform)), title_style), table,])
+    platform_full_name = get_platform_full_name(platform)
+    document.build([Paragraph(escape(str(f"{platform_full_name} Collection {get_timestamp()}")), title_style), table,])
 
     return pdf_path
 
@@ -878,6 +885,17 @@ def get_color(name, default):
         return default
     return active_settings["theming"]["custom_colors"].get(name, active_settings["theming"]["custom_colors"].get("custom_context_fallback", "#00AAAA")) if is_toggled("use_custom_colors") else default
 
+def get_color_export(column, value):
+    column = handle_normalized_text(column)
+    column = re.sub(r"[^a-z0-9]+", "_", column)
+    column = column.strip("_")
+
+    value = handle_normalized_text(value)
+    value = re.sub(r"[^a-z0-9]+", "_", value)
+    value = value.strip("_")
+
+    return f"{column}_{value}"
+
 def get_columns_to_drop(platform):
     if active_settings is None:
         return []
@@ -1204,6 +1222,16 @@ def get_platform_name():
     if active_settings is None:
         return None
     return active_settings["platforms"][get_platform_key()]
+
+def get_platform_full_name(platform_key=None):
+    if active_settings is None:
+        return None
+
+    if platform_key is None:
+        platform_key = get_platform_key()
+
+    platform_name = active_settings["platforms"].get(platform_key)
+    return platform_name if platform_name else None
 
 def get_named_release_ranges():
     return [value for value in get_release_ranges() if value.strip()]
@@ -4009,15 +4037,44 @@ def main():
         ("payed", "Total Payed: 0.00"),
         ("value", "Total Value: 0.00"),
     )
-
+    col_stats_column = 0
     for column, (stat_name, initial_text) in enumerate(stats_definitions):
         stat_label = ttk.Label(col_exp_stats, text=initial_text, anchor="center")
         stat_label.grid(row=0, column=column, sticky="ew", padx=8, pady=4)
         col_exp_stats.columnconfigure(column, weight=1)
         collection_stats_labels[stat_name] = stat_label
+        col_stats_column += 1
+
+    # Entry for conversion factor
+    col_conversion_factor_frame = ttk.Frame(col_exp_stats)
+    col_conversion_factor_frame.grid(row=0, column=col_stats_column, sticky="ew", padx=8, pady=4) 
+    col_conversion_factor_label = ttk.Label(col_conversion_factor_frame, text="Conversion Factor:", anchor="center")
+    col_conversion_factor_label.grid(row=0, column=0, sticky="ew")
+    col_conversion_factor_var = tk.StringVar(value=str(active_settings.get("currency_conversion", {}).get("conversion_factor", "")))
+    col_conversion_factor_entry = ttk.Entry(col_conversion_factor_frame, textvariable=col_conversion_factor_var)
+    col_conversion_factor_entry.grid(row=0, column=1, sticky="ew")
+    def conversion_factor_changed():
+        if active_settings is None:
+            return
+
+        text = col_conversion_factor_var.get().strip()
+        try:
+            conversion_factor = float(text)
+        except ValueError:
+            return
+
+        active_settings.setdefault("currency_conversion", {})["conversion_factor"] = conversion_factor
+
+        settings_save()
+        update_collection_stats()
+
+    col_conversion_factor_btn = ttk.Button(col_conversion_factor_frame, text="Apply", command=conversion_factor_changed)
+    col_conversion_factor_btn.grid(row=0, column=2, sticky="ew", padx=(4, 0))
+    col_conversion_factor_btn.configure(padding=0)
+    col_conversion_factor_frame.columnconfigure(1, weight=1)
 
     col_stats_graph_frame = ttk.Frame(col_exp_stats, relief="sunken")
-    col_stats_graph_frame.grid(row=1, column=0, columnspan=len(stats_definitions), sticky="ew", padx=2, pady=2)
+    col_stats_graph_frame.grid(row=1, column=0, columnspan=len(stats_definitions)+2, sticky="ew", padx=2, pady=2)
     col_stats_graph_frame.columnconfigure(0, weight=1)
 
     for column in range(CHARTS_PER_ROW):
