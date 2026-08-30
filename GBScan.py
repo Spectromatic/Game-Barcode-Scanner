@@ -757,7 +757,7 @@ def game_accept():
 
     # If the title is neew/unknown
     if active_game_is_new:
-        response = messagebox.askyesno("Add to source database", (f"Do you wish to add '{selected_title}' ({selected_platform}) to the source database?"))
+        response = messagebox.askyesnocancel("Add to source database", (f"Do you wish to add '{selected_title}' ({selected_platform}) to the source database?"))
         if response:
             create_source_diff()
             try:
@@ -765,14 +765,22 @@ def game_accept():
             except Exception as exc:
                 handle_error(f"Unable to add '{selected_title}' to the source database:\n{exc}")
                 return
+        elif response is False:
+            pass
+        else:
+            return
 
     # If there's changes to the taxonomy 
     elif is_source_taxonomy_changed() or is_source_game_data_changed() or is_source_os_changed():
-        response = messagebox.askyesno("Update title", f"Do you wish to update the info for '{selected_title}' in the source database?")
+        response = messagebox.askyesnocancel("Update title", f"Do you wish to update the info for '{selected_title}' in the source database?")
         if response:
             create_source_diff()
         if response and not update_source_record():
             handle_error(f"Unable to update '{selected_title}' in the source database.")
+            return
+        elif response is False:
+            pass
+        else:
             return
 
     df = pd.DataFrame(ordered_data)
@@ -1177,7 +1185,7 @@ def get_game_source_data(query):
 
     # If the game begins with "The ", check for matches that end with ", The"
     if matches.empty and normalized_query.startswith("the "):
-        matches = source_data[handle_normalized_text(source_data["title"]) == normalized_query[4:] + ", the"]
+        matches = source_data[source_data["title"].map(handle_normalized_text) == normalized_query[4:] + ", the"]
 
     if not matches.empty:
         found_method['title_the'] = True
@@ -1292,9 +1300,9 @@ def get_os_record_fields(os_name=None):
         if os_name is not None and current_os_name != os_name:
             continue
 
-        if current_os_name == os_name:
-            selected_versions = active_specs.get(os_name, [])
-            fields[os_name] = selected_versions[0] if selected_versions else ""
+        if handle_normalized_text(current_os_name) == "dos":
+            selected_versions = active_specs.get(current_os_name, [])
+            fields[current_os_name] = selected_versions[0] if selected_versions else ""
         else:
             for version in versions:
                 status = get_os_version_status(current_os_name, version)
@@ -1312,11 +1320,11 @@ def get_os_specs(source_data):
     yes_symbol = handle_normalized_text(active_settings.get("symbols", {}).get("yes", "Y"))
 
     for os_name, versions in get_os().items():
-        os_name = handle_normalized_text(os_name)
-        if os_name == "dos":
+        normalized_os_name = handle_normalized_text(os_name)
+        if normalized_os_name == "dos":
             saved_version = str(normalized_source_data.get("dos", "") or "").strip()
             if saved_version in [str(version) for version in versions]:
-                active_specs["dos"] = [saved_version]
+                active_specs[os_name] = [saved_version]
 
             continue
 
@@ -1443,7 +1451,7 @@ def get_source_record(game_data=None):
     timestamp = get_timestamp()
     record = get_filtered_game_data(game_data)
     record.update({
-        "added": active_source_game_data.get("added", "") if active_game_is_new else timestamp,
+        "added": timestamp if active_game_is_new else active_source_game_data.get("added", ""),
         "modified": "" if active_game_is_new else timestamp,
         "platform": get_platform_name(),
         **get_player_mode_flags(),
@@ -1547,6 +1555,12 @@ def handle_ellipsis(text, max_length=30):
 def handle_error(message):
     # Display the error message in a message box
     messagebox.showerror("Error", message)
+
+def handle_keypad_enter(event):
+    focused_widget = event.widget
+    if isinstance(focused_widget, ttk.Button):
+        focused_widget.invoke()
+        return "break"
 
 def handle_missing_field(widget, key):
     info = widget.grid_info()
@@ -3083,6 +3097,7 @@ def search_game(query):
         active_contexts["price"] = ""
 
         def finish_unknown():
+            settings_set_defaults()
             update_button_states("normal")
             update_info_frame()
             button_focus_accept()
@@ -3114,7 +3129,7 @@ def search_game(query):
     # Populate the active_source_game_data with OS-specific versions from the match
     for os_name, versions in get_os().items():
         if os_name == "DOS":
-            active_source_game_data["DOS"] = normalized_match.get("DOS", "")
+            active_source_game_data["DOS"] = normalized_match.get("dos", "")
         else:
             for version in versions:
                 source_key = handle_normalized_text(str(version).replace(" ", "_"))
@@ -4330,6 +4345,7 @@ def main():
     searchentry.focus()
 
     logtree.bind("<Double-1>", recall_log_item)
+    root.bind_all("<KP_Enter>", handle_keypad_enter)
     root.bind_all('<y>', lambda event: handle_accept_key(root, event))
     root.bind_all('<Y>', lambda event: handle_accept_key(root, event))
     root.bind_all('<n>', lambda event: handle_decline_key(root, event))
