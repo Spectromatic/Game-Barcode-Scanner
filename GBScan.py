@@ -73,6 +73,9 @@ collection_stats_labels = {}
 col_stats_chart = {}
 col_stats_chart_data = {}
 col_stats_graph_frame = None
+active_pricecharting_soup = None
+active_pricecharting_requested_url = None
+active_pricecharting_url = None
 
 def add_id(key):
     print(f"Debug: Adding Moby ID")
@@ -1351,6 +1354,7 @@ def get_release_ranges():
 
 def get_response(url, timeout=100, **kwargs):
     try:
+        print(f"Fetching URL: {url}")
         return requests.get(url, timeout=timeout, **kwargs)
     except requests.RequestException as e:
         handle_error(f"Error fetching URL: {url}\n{e}")
@@ -2707,7 +2711,9 @@ def scrape_pricecharting_img(soup, force=False):
         print(f"Debug: Failed to save PriceCharting image: {exc}")
         return None
 
+# TODO: Save big soup in memory and scrape that instead of making multiple requests for the same page
 def scrape_pricecharting_price(query, known_url=None):
+    global active_pricecharting_soup, active_pricecharting_requested_url, active_pricecharting_url
     skip = False
     if skip:
         print("Debug: Skipping PriceCharting scrape due to skip flag.")
@@ -2723,20 +2729,35 @@ def scrape_pricecharting_price(query, known_url=None):
     big_soup = None
     product_page = False
     response_url = None
+    product_response_url = None
+    search_url = known_url if known_url is not None else None
 
-    if is_upc(query) and known_url is None:
-        search_url = f"https://www.pricecharting.com/search-products?type=prices&q={query}"
-        _, price_soup, big_soup, response_url = get_specific_soup_by_class(search_url, "table", "js-addable hoverable-rows sortable")
-
+    # Try title first since we generally have more luck with that
     if price_soup is None and known_url is None:
         search_url = f"https://www.pricecharting.com/search-products?type=prices&q={title}"
         _, price_soup, big_soup, response_url = get_specific_soup_by_class(search_url, "table", "js-addable hoverable-rows sortable")
 
+    # Try the UPC as a fallback
+    if is_upc(query) and price_soup is None and known_url is None:
+        search_url = f"https://www.pricecharting.com/search-products?type=prices&q={query}"
+        _, price_soup, big_soup, response_url = get_specific_soup_by_class(search_url, "table", "js-addable hoverable-rows sortable")
+
     if known_url is not None:
-        search_url = known_url
+        if (active_pricecharting_soup is not None and known_url in (active_pricecharting_url, active_pricecharting_requested_url)):
+            big_soup = active_pricecharting_soup
+            response_url = active_pricecharting_url
+            _, price_soup, _, product_response_url = get_specific_soup_by_id(known_url, "table", "price_data", known_soup=big_soup)
+        else:
+            product_page, price_soup, big_soup, product_response_url = get_specific_soup_by_id(known_url, "table", "price_data", known_soup=big_soup)
 
     if price_soup is None:
         product_page, price_soup, big_soup, product_response_url = get_specific_soup_by_id(search_url, "table", "price_data", known_soup=big_soup)
+
+    if big_soup is not None:
+        product_page = True
+        active_pricecharting_soup = big_soup
+        active_pricecharting_requested_url = search_url
+        active_pricecharting_url = response_url
 
     # Ensure that the redirected URL is used if available
     response_url = response_url or product_response_url
@@ -2801,10 +2822,12 @@ def scrape_pricecharting_price(query, known_url=None):
                 "cib": "complete",
                 "no manual": "item & box",
                 "no case": "item & manual",
+                "no sleeve": "item & box",
                 "manual only": "manual only",
+                "sleeve only": "manual only",
                 "case only": "box only",
                 "loose disc": "loose",
-                "nothing": "loose",
+                "nothing": "loose"
             }.get(content_value, "complete")
 
         price = price_labels.get(price_label)
@@ -2956,6 +2979,10 @@ def scrape_upc(soup):
 
 def search_game(query):
     global active_game_data, active_taxonomy, active_contexts, active_title, active_perspective, active_game_is_new, active_source_taxonomy, active_source_game_data
+    global active_pricecharting_soup, active_pricecharting_requested_url, active_pricecharting_url
+    active_pricecharting_soup = None
+    active_pricecharting_requested_url = None
+    active_pricecharting_url = None
     active_game_data = {}
     active_taxonomy = {}
     active_contexts = {}
@@ -3030,7 +3057,7 @@ def search_game(query):
     if item_link:
         active_game_data["price_url"] = item_link
         print(f"Debug: Got link scraping {item_link}")
-        pc_soup = get_soup(item_link)
+        pc_soup = get_soup(item_link) if active_pricecharting_soup is None else active_pricecharting_soup
         upc = scrape_upc(pc_soup) if not is_upc(query) else ""
         active_game_data["upc"] = upc if upc else active_game_data.get("upc", "")
         cover_img_path = scrape_pricecharting_img(pc_soup)
@@ -3084,12 +3111,11 @@ def selections_update(name, value):
         should_refetch = (name == "conditions" and (("sealed" in new_condition and "sealed" not in old_condition) or ("sealed" in old_condition and "sealed" not in new_condition))) or new_content != old_content
         price = None
         if should_refetch and (active_game_data.get("title") != "" or active_game_data.get("upc") != ""):
-            print(f"Debug: Refetching prices due to change in condition/content. Old Condition: {old_condition}, New Condition: {new_condition}, Old Content: {old_content}, New Content: {new_content}")
+            print(f"Debug: Getting new prices due to change in condition/content. Old Condition: {old_condition}, New Condition: {new_condition}, Old Content: {old_content}, New Content: {new_content}")
             price, _ = scrape_pricecharting_price(active_game_data.get("upc") or active_game_data.get("title", ""), known_url=active_game_data.get("price_url", None))
 
         if price is not None:
             active_contexts["price"] = price
-            print(f"Debug: Re-fetched price for UPC {active_game_data.get('upc') or active_game_data.get('title', '')}: {price}")
 
     if name == "editions":
         rebuild_context_choices()
