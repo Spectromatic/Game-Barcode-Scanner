@@ -19,6 +19,7 @@
         "Evercade": "Evercade"
     },
     "platform_aliases": {
+        "PC": "PC Games",
         "GBA": "Gameboy Advance",
         "GB": "Gameboy"
     },
@@ -70,7 +71,8 @@
             "Special",
             "Collector",
             "GOTY",
-            "Promo"
+            "Promo",
+            "Complete"
         ],
         "release_range": []
     },
@@ -348,8 +350,7 @@
     },
     "OS": {
         "Amiga": {
-            "prefix": "Kickstart ",
-            "versions": [
+            "Kickstart": [
                 "1.0",
                 "1.1",
                 "1.2",
@@ -361,9 +362,8 @@
                 "3.9"
             ]
         },
-        "DOS": {
-            "prefix": "PC/MS-DOS ",
-            "versions": [
+        "PC": {
+            "DOS": [
                 "1.0",
                 "2.0",
                 "3.0",
@@ -372,11 +372,8 @@
                 "5.0",
                 "6.0",
                 "6.22"
-            ]
-        },
-        "PC": {
-            "prefix": "Windows ",
-            "versions": [
+            ],
+            "Windows": [
                 "3.1",
                 "95",
                 "98",
@@ -385,7 +382,6 @@
                 "XP",
                 "Vista",
                 "7",
-                "8",
                 "10",
                 "11"
             ]

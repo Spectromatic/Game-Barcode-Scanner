@@ -63,6 +63,7 @@ declinebutton = None
 logframe = None
 logtree = None
 _exclusion_image_refs = []
+_os_version_image_refs = []
 missing_fields = {}
 thumbnail_label = None
 thumbnail_image = None
@@ -173,7 +174,7 @@ def append_new_source_record():
 
     source_file = Path(f"{BASE_DIR}/Data/{platform}.xlsx")
     source_data = pd.read_excel(source_file, engine="openpyxl", dtype=str).fillna("")
-    source_data.columns = handle_normalized_cols(source_data.columns)
+    source_data.columns = handle_normalized_list(source_data.columns)
 
     normalized_record = {str(key).lower().replace(" ", "_"): value for key, value in record.items()}
     new_row = {column: normalized_record.get(column, "") for column in source_data.columns}
@@ -474,6 +475,7 @@ def clear_infoframe():
             active_contexts[k] = get_context_data(k)
         for ctx in ("payed", "price"):
             active_contexts[ctx] = ""
+        
 
         active_title = None
         active_perspective = None
@@ -724,16 +726,7 @@ def game_accept():
         "Moby Score": [active_game_data.get('moby_score')] if active_game_data.get('moby_score') else "",
         "Payed": [active_contexts.get('payed')] if active_contexts.get('payed') else "",
         "Value": [active_contexts.get('price')] if active_contexts.get('price') else "",
-        "DOS": [active_specs.get('DOS', '')] if active_specs else "",
-        "3.1": [active_specs.get('3.1', '')] if active_specs else "",
-        "95": [active_specs.get('95', '')] if active_specs else "",
-        "98": [active_specs.get('98', '')] if active_specs else "",
-        "ME": [active_specs.get('ME', '')] if active_specs else "",
-        "2000": [active_specs.get('2000', '')] if active_specs else "",
-        "XP": [active_specs.get('XP', '')] if active_specs else "",
-        "Vista": [active_specs.get('Vista', '')] if active_specs else "",
-        "Win7": [active_specs.get('7', '')] if active_specs else "",
-        "Win10": [active_specs.get('10', '')] if active_specs else "",
+        **{key: [value] for key, value in get_os_record_fields().items()},
         "DX": [active_specs.get('DX', '')] if active_specs else "",
         "Ripped": [active_specs.get('Ripped', '')] if active_specs else "",
         "Copy Protection": [active_specs.get('Copy Protection', '')] if active_specs else "",
@@ -774,7 +767,7 @@ def game_accept():
                 return
 
     # If there's changes to the taxonomy 
-    elif is_source_taxonomy_changed() or is_source_game_data_changed():
+    elif is_source_taxonomy_changed() or is_source_game_data_changed() or is_source_os_changed():
         response = messagebox.askyesno("Update title", f"Do you wish to update the info for '{selected_title}' in the source database?")
         if response:
             create_source_diff()
@@ -792,11 +785,12 @@ def game_accept():
 
 def game_clear():
     # Clear the active game data and reset the active title and perspective
-    global active_game_data, active_taxonomy, active_contexts, active_title, active_perspective, active_game_is_new, active_source_taxonomy
+    global active_game_data, active_taxonomy, active_contexts, active_title, active_perspective, active_game_is_new, active_source_taxonomy, active_specs
+    active_source_taxonomy = {}
     active_game_data = {}
     active_taxonomy = {}
-    active_source_taxonomy = {}
     active_contexts = {}
+    active_specs = {}
     active_title = None
     active_perspective = None
     active_game_is_new = False
@@ -816,7 +810,7 @@ def game_search_focus():
     searchentry.focus_set()
 
 def game_decline():
-    if not active_game_is_new and (is_source_taxonomy_changed() or is_source_game_data_changed()):
+    if not active_game_is_new and (is_source_taxonomy_changed() or is_source_game_data_changed() or is_source_os_changed()):
         response = messagebox.askyesno("Update source database", "Do you wish to update the source database before discarding this game?")
 
         if response:
@@ -1130,14 +1124,14 @@ def get_game_data(query, platform=None):
         print(f"Debug: Found exact match for query '{query}'")
         matches = exact_match.copy()
         matches = matches.to_frame().T if isinstance(matches, pd.Series) else matches
-        matches.columns = handle_normalized_cols(matches.columns)
+        matches.columns = handle_normalized_list(matches.columns)
         return matches.iloc[0]
     contains_match = df[df[title_col].str.strip().str.lower().str.contains(q, na=False)]
     if not contains_match.empty:
         print(f"Debug: Found contains match for query '{query}'")
         matches = contains_match.copy()
         matches = matches.to_frame().T if isinstance(matches, pd.Series) else matches
-        matches.columns = handle_normalized_cols(matches.columns)
+        matches.columns = handle_normalized_list(matches.columns)
         return matches.iloc[0]
     
     handle_error(f"{query} not found.")
@@ -1162,7 +1156,7 @@ def get_game_source_data(query):
         handle_error(f"Source data for platform '{platform}' is empty.")
         return None
 
-    source_data.columns = handle_normalized_cols(source_data.columns)
+    source_data.columns = handle_normalized_list(source_data.columns)
     source_data = source_data.fillna("")
 
     normalized_query = handle_normalized_text(query)
@@ -1183,7 +1177,7 @@ def get_game_source_data(query):
 
     # If the game begins with "The ", check for matches that end with ", The"
     if matches.empty and normalized_query.startswith("the "):
-        matches = source_data[source_data["title"].str.lower() == normalized_query[4:] + ", the"]
+        matches = source_data[handle_normalized_text(source_data["title"]) == normalized_query[4:] + ", the"]
 
     if not matches.empty:
         found_method['title_the'] = True
@@ -1246,12 +1240,6 @@ def get_options_for_key(key):
         return active_settings["taxonomy"][key]
     return []
 
-def get_os_prefix() -> str:
-    if active_settings is None:
-        return ""
-    os = get_platform_key()
-    return active_settings.get("OS", {}).get(os, {}).get("prefix", "") if os else ""
-
 def get_player_mode_flags(player_value=None):
     if player_value is None:
         player_value = active_taxonomy.get("player", "")
@@ -1270,15 +1258,78 @@ def get_player_mode_flags(player_value=None):
     }
 
 def get_all_os_versions() -> dict:
+    return {os_name: versions for os_name, versions in get_os().items()}
+
+def get_os() -> dict:
     if active_settings is None:
         return {}
-    return {os: active_settings.get("OS", {}).get(os, {}).get("versions", []) for os in active_settings.get("OS", {})}
+    platform = get_platform_key()
+    return active_settings.get("OS", {}).get(platform, {})
 
-def get_os_versions() -> list:
-    if active_settings is None:
-        return []
-    os = get_platform_key()
-    return active_settings.get("OS", {}).get(os, {}).get("versions", []) if os else []
+def get_os_versions(os_name: str) -> list[str]:
+    return get_os().get(os_name, [])
+
+def get_os_version_status(os_name, version):
+    versions = get_os_versions(os_name)
+    selected_versions = set(active_specs.get(os_name, []))
+
+    if not selected_versions or version not in versions:
+        return "" if not selected_versions else "TBD"
+
+    if version in selected_versions:
+        return "Y"
+
+    selected_indices = [versions.index(selected_version) for selected_version in selected_versions if selected_version in versions]
+    if not selected_indices:
+        return ""
+
+    return "N" if versions.index(version) < max(selected_indices) else "TBD"
+
+def get_os_record_fields(os_name=None):
+    fields = {}
+
+    for current_os_name, versions in get_os().items():
+        if os_name is not None and current_os_name != os_name:
+            continue
+
+        if current_os_name == os_name:
+            selected_versions = active_specs.get(os_name, [])
+            fields[os_name] = selected_versions[0] if selected_versions else ""
+        else:
+            for version in versions:
+                status = get_os_version_status(current_os_name, version)
+                fields[str(version)] = "N" if status == "TBD" else status
+
+    return fields
+
+def get_os_specs(source_data):
+    global active_specs
+    active_specs = {}
+    if active_settings is None or source_data is None:
+        return
+
+    normalized_source_data = handle_normalized_dict(source_data)
+    yes_symbol = handle_normalized_text(active_settings.get("symbols", {}).get("yes", "Y"))
+
+    for os_name, versions in get_os().items():
+        os_name = handle_normalized_text(os_name)
+        if os_name == "dos":
+            saved_version = str(normalized_source_data.get("dos", "") or "").strip()
+            if saved_version in [str(version) for version in versions]:
+                active_specs["dos"] = [saved_version]
+
+            continue
+
+        selected_versions = []
+
+        for version in versions:
+            source_key = handle_normalized_text(str(version).replace(" ", "_"))
+            saved_status = handle_normalized_text(normalized_source_data.get(source_key, "") or "")
+            if saved_status == yes_symbol:
+                selected_versions.append(str(version))
+
+        if selected_versions:
+            active_specs[os_name] = selected_versions
 
 def get_platform_key():
     if active_settings is None:
@@ -1396,6 +1447,7 @@ def get_source_record(game_data=None):
         "modified": "" if active_game_is_new else timestamp,
         "platform": get_platform_name(),
         **get_player_mode_flags(),
+        **get_os_record_fields(),
     })
 
     for key in get_taxonomy_keys():
@@ -1573,9 +1625,17 @@ def handle_normalized_text(text):
     # Normalize text to lowercase and stripped of whitespace
     return str(text).strip().casefold()
 
-def handle_normalized_cols(cols):
+def handle_normalized_list(cols):
     # Normalize column names to lowercase and stripped of whitespace
-    return [str(col).replace(" ", "_").strip().lower().strip('_') for col in cols]
+    return [str(col).replace(" ", "_").strip().casefold().strip('_') for col in cols]
+
+def handle_normalized_dict(d):
+    # Normalize dictionary keys to lowercase and stripped of whitespace
+    return {handle_normalized_text(str(k).replace(" ", "_")): handle_normalized_text(v) for k, v in d.items()}
+
+def handle_normalized_os_status(value):
+    value = handle_normalized_text(value)
+    return "n" if value == "tbd" else value
 
 def handle_single_option(options):
     # Handle the case where there is only one option available
@@ -1750,6 +1810,14 @@ def is_source_game_data_changed(key = None):
         return str(active_game_data.get(key, "")) != str(active_source_game_data.get(key, ""))
     
     return any(str(active_game_data.get(source_key, "")) != str(active_source_game_data.get(source_key, "")) for source_key in source_keys)
+
+def is_source_os_changed(os_name=None):
+    if active_game_is_new or not active_source_game_data:
+        return False
+
+    source_fields = handle_normalized_dict(active_source_game_data)
+    current_fields = handle_normalized_dict(get_os_record_fields(os_name))
+    return any(current_fields.get(key, "") != source_fields.get(key, "") for key in current_fields)
 
 def is_source_taxonomy_changed(key = None):
     if active_game_is_new or not active_source_taxonomy:
@@ -2711,7 +2779,6 @@ def scrape_pricecharting_img(soup, force=False):
         print(f"Debug: Failed to save PriceCharting image: {exc}")
         return None
 
-# TODO: Save big soup in memory and scrape that instead of making multiple requests for the same page
 def scrape_pricecharting_price(query, known_url=None):
     global active_pricecharting_soup, active_pricecharting_requested_url, active_pricecharting_url
     skip = False
@@ -2978,7 +3045,7 @@ def scrape_upc(soup):
     return upc   
 
 def search_game(query):
-    global active_game_data, active_taxonomy, active_contexts, active_title, active_perspective, active_game_is_new, active_source_taxonomy, active_source_game_data
+    global active_game_data, active_taxonomy, active_contexts, active_title, active_perspective, active_game_is_new, active_source_taxonomy, active_source_game_data, active_specs
     global active_pricecharting_soup, active_pricecharting_requested_url, active_pricecharting_url
     active_pricecharting_soup = None
     active_pricecharting_requested_url = None
@@ -2986,6 +3053,7 @@ def search_game(query):
     active_game_data = {}
     active_taxonomy = {}
     active_contexts = {}
+    active_specs = {}
     active_source_taxonomy = {}
     active_game_is_new = False
     
@@ -3024,6 +3092,7 @@ def search_game(query):
 
         return
 
+    normalized_match = handle_normalized_dict(match)
     active_game_data["title"] = match.get("title", "")
     active_game_data["developer"] = match.get("developer", "")
     active_game_data["release_date"] = match.get("release_date", "")
@@ -3040,6 +3109,16 @@ def search_game(query):
         active_source_taxonomy[taxonomy_key] = value
 
     active_source_game_data = get_filtered_game_data(match)
+    get_os_specs(match)
+
+    # Populate the active_source_game_data with OS-specific versions from the match
+    for os_name, versions in get_os().items():
+        if os_name == "DOS":
+            active_source_game_data["DOS"] = normalized_match.get("DOS", "")
+        else:
+            for version in versions:
+                source_key = handle_normalized_text(str(version).replace(" ", "_"))
+                active_source_game_data[str(version)] = normalized_match.get(source_key, "")
 
     # Get the context data from the match or use the default values if not found
     for context in get_all_contexts():
@@ -3440,6 +3519,7 @@ def update_info_frame():
         return
     
     clear_infoframe()
+    _os_version_image_refs.clear()
     missing_fields.clear()
     update_thumbnail()
     
@@ -3657,6 +3737,37 @@ def update_info_frame():
             if display_value.endswith("..."):
                 Tooltip(value_label, text=str(value))
 
+    # Handle OS versions display
+    os_row = len(active_physical_items) + active_physical_data_offset
+
+    for os_name, versions in get_os().items():
+        if not versions:
+            continue
+
+        frame_modified = is_source_os_changed(os_name)
+
+        os_frame = ttk.Frame(infoframe, style="ModifiedOSFrame.TFrame" if frame_modified else "OSFrame.TFrame", padding=0)
+        os_frame.grid(row=os_row, column=4, columnspan=2, rowspan=2, sticky="nsew")
+        os_frame.columnconfigure(0, weight=1)
+
+        os_label = ttk.Label(os_frame, text=f"{os_name}:", style=f"InfoData{'Even' if os_row % 2 == 0 else 'Odd'}.TLabel")
+        os_label.grid(row=0, column=0, rowspan=2, sticky="nsew")
+
+        for version_index, version in enumerate(versions, start=1):
+            version_image = rotated_text_image(str(version), font_size=10)
+            _os_version_image_refs.append(version_image)
+
+            selected = version in active_specs.get(os_name, [])
+            version_var = tk.BooleanVar(value=selected)
+
+            version_label = ttk.Label(os_frame, image=version_image)
+            version_label.grid(row=0, column=version_index, sticky="sw")
+
+            checkpoint = ttk.Checkbutton(os_frame, variable=version_var, command=lambda family=os_name, selected_version=version, var=version_var: update_os_version(family, selected_version, var))
+            checkpoint.grid(row=1, column=version_index, sticky="nsew")
+
+        os_row += 2
+
     cols, rows = infoframe.grid_size()
     for col in range(cols):
         infoframe.columnconfigure(col, weight=0 if col % 2 == 0 else 1, minsize=100 if col % 2 == 0 else 10)
@@ -3664,6 +3775,28 @@ def update_info_frame():
         infoframe.rowconfigure(row, weight=1, minsize=20)
 
     infoframe.update_idletasks()
+
+def update_os_version(os_name, version, selected_var):
+    global active_specs
+
+    if os_name == "DOS":
+        if selected_var.get():
+            active_specs["DOS"] = [version]
+        else:
+            active_specs.pop("DOS", None)
+    else:
+        selected_versions = active_specs.setdefault(os_name, [])
+
+        if selected_var.get():
+            if version not in selected_versions:
+                selected_versions.append(version)
+        elif version in selected_versions:
+            selected_versions.remove(version)
+
+        if not selected_versions:
+            active_specs.pop(os_name, None)
+
+    update_info_frame()
 
 def update_source_record():
     if not active_game_data:
@@ -3677,7 +3810,7 @@ def update_source_record():
 
     try:
         source_data = pd.read_excel(source_file, engine="openpyxl", dtype=str).fillna("")
-        source_data.columns = handle_normalized_cols(source_data.columns)
+        source_data.columns = handle_normalized_list(source_data.columns)
         matching_row = (source_data["title"].map(handle_normalized_text) == title)
         if not matching_row.any():
             handle_error(f"No matching game found for title '{title}' in source data.")
@@ -3691,6 +3824,7 @@ def update_source_record():
         record.update({
             "platform": platform,
             "added": existing_added,
+            **get_os_record_fields()
         })
 
         for key in get_taxonomy_keys():
@@ -3700,7 +3834,7 @@ def update_source_record():
             source_key = key[:-1] if key.endswith("s") else key
             record[source_key] = active_contexts.get(key, "")
 
-        normalized_record = {str(key).lower().replace(" ", "_"): value for key, value in record.items()}
+        normalized_record = handle_normalized_dict(record)
         changed = any(str(existing_row.get(column, "")) != str(value) for column, value in normalized_record.items())
         normalized_record["modified"] = (get_timestamp() if changed else existing_modified)
 
@@ -3859,9 +3993,10 @@ def main():
     style.configure("ModifiedInfoDataOdd.TLabel", background=modified_color, foreground="#000000")
     style.configure("ModifiedTaxonomy.TMenubutton", background=modified_color, foreground="#000000", lightcolor=modify_color(modified_color, 0.2), darkcolor=modify_color(modified_color, -0.1), bordercolor=modify_color(modified_color, -0.2))
     style.map("ModifiedTaxonomy.TMenubutton", background=[("active", modified_color), ("pressed", modified_color), ("!disabled", modified_color)])
-
+    # Select Columns button style on the collection tab
     style.configure("SelectColumns.TButton", background=modified_color, foreground="#000000", lightcolor=modify_color(modified_color, 0.3), darkcolor=modify_color(modified_color, -0.1), bordercolor=modify_color(modified_color, -0.2), padding=0, relief="raised")
     style.map("SelectColumns.TButton", background=[("active", modify_color(modified_color, -0.05)), ("pressed", modified_color), ("!disabled", modified_color)])
+    style.configure("ModifiedOSFrame.TFrame", background=modified_color, foreground="#000000")
 
     main_notebook = ttk.Notebook(root)
     main_notebook.grid(row=0, column=0, sticky="nsew", padx=4, pady=4)
