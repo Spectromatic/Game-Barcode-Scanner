@@ -41,7 +41,7 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 CHARTS_PER_ROW = 3
 active_game_data = {}
 active_game_is_new = False
-active_perspective = None
+active_game_in_collection = False
 active_contexts = {}
 active_settings = None
 active_selections = {}
@@ -453,7 +453,7 @@ def button_select_all(event=None):
     return "break"
 
 def clear_infoframe():
-    global infoframe, active_game_data, active_taxonomy, active_contexts, active_title, active_perspective
+    global infoframe, active_game_data, active_taxonomy, active_contexts
     if infoframe is None:
         return
     
@@ -475,10 +475,6 @@ def clear_infoframe():
             active_contexts[k] = get_context_data(k)
         for ctx in ("payed", "price"):
             active_contexts[ctx] = ""
-        
-
-        active_title = None
-        active_perspective = None
 
         # Render the Add-buttons via the existing renderer
         update_info_frame()
@@ -663,6 +659,8 @@ def exclusion_rule_edit(frame, rule, column, value):
     settings_save()
 
 def game_accept():
+    global active_game_is_new
+
     if active_settings is None:
         handle_error("No settings available.")
         return
@@ -793,15 +791,17 @@ def game_accept():
 
 def game_clear():
     # Clear the active game data and reset the active title and perspective
-    global active_game_data, active_taxonomy, active_contexts, active_title, active_perspective, active_game_is_new, active_source_taxonomy, active_specs
+    global active_game_data, active_taxonomy, active_contexts, active_specs
+    global active_source_taxonomy, active_source_game_data
+    global active_game_is_new, active_game_in_collection
+    active_source_game_data = {}
     active_source_taxonomy = {}
     active_game_data = {}
     active_taxonomy = {}
     active_contexts = {}
     active_specs = {}
-    active_title = None
-    active_perspective = None
     active_game_is_new = False
+    active_game_in_collection = False
 
     clear_infoframe()
 
@@ -1511,13 +1511,19 @@ def get_taxonomy_data(key):
 
 def get_taxonomy_default_idx(key: str) -> int:
     if active_settings is None:
-        return 0
+        return -1
+
     defaults = active_settings.get("platform_defaults", {})
-    platform_defaults = defaults.get(get_platform_key(), defaults.get("Default", {}))
-    idx = 0
-    if key in platform_defaults:
-        idx = int(platform_defaults[key])
-    return idx
+    platform_defaults = defaults.get(get_platform_key(),defaults.get("Default", {}))
+
+    default_value = platform_defaults.get(key, "")
+    options = get_taxonomy_data(key)
+
+    if default_value in options:
+        return options.index(default_value)
+
+    # Missing or invalid taxonomy defaults have no selected index.
+    return -1
 
 def get_thumbnail_path(url=None):
     game_id = None
@@ -1802,6 +1808,21 @@ def is_context_value(context, key, value):
     
     selected_value = get_context_data(key)
     return str(selected_value or "").casefold() == str(value or "").casefold()
+
+def is_title_in_collection(title, platform=None):
+    collection_path = get_collection_path()
+    if not collection_path.exists() or not title:
+        return False
+
+    platform = platform or get_platform_key()
+    collection_data = pd.read_excel(collection_path, sheet_name=platform, engine="openpyxl", dtype=str).fillna("")
+    title_column = next((column for column in collection_data.columns if str(column).casefold() == "title"), None)
+
+    if title_column is None:
+        return False
+
+    normalized_title = handle_normalized_text(title)
+    return collection_data[title_column].map(handle_normalized_text).eq(normalized_title).any()
 
 def is_os():
     if active_settings is None:
@@ -2302,9 +2323,7 @@ def open_platform_defaults_window():
             return
         new_defaults = {}
         for k, v in add_setting_vars_tax.items():
-            options = get_options_for_key(k)
-            idx = options.index(v.get()) if v.get() in options else 0
-            new_defaults[k] = idx
+            new_defaults[k] = v.get()
         active_settings.setdefault("platform_defaults", {})[platform] = {**active_settings.setdefault("platform_defaults", {}).get(platform, {}), **new_defaults}
         settings_save()
         populate_platform_defaults_list(taxonomy_list_frame, taxonomy_keys)
@@ -2493,9 +2512,7 @@ def populate_platform_defaults_list(frame, settings_keys):
     def default_edit(platform, key, var):
         if active_settings is None:
             return
-        options = get_options_for_key(key)
-        idx = options.index(var.get()) if var.get() in options else 0
-        active_settings.setdefault("platform_defaults", {}).setdefault(platform, {})[key] = idx
+        active_settings.setdefault("platform_defaults", {}).setdefault(platform, {})[key] = var.get()
         settings_save()
 
     def default_remove(platform):
@@ -2512,8 +2529,12 @@ def populate_platform_defaults_list(frame, settings_keys):
         ttk.Label(row_frame, text=platform_name, width=15).grid(row=0, column=0, padx=4, pady=2, sticky="w")
         for j, key in enumerate(settings_keys, start=1):
             options = get_options_for_key(key)
-            idx = settings.get(key, 0)
-            var = tk.StringVar(value=options[idx] if options else "")
+            if key in active_settings.get("taxonomy", {}):
+                value = settings.get(key, "")
+                var = tk.StringVar(value=value if value in options else "")
+            else:
+                idx = settings.get(key, 0)
+                var = tk.StringVar(value=options[idx] if options else "")
             menu = ttk.OptionMenu(row_frame, var, var.get(), *options)
             menu.configure(padding=(0, 0))
             menu.config(width=len(max(options, key=len)) + 2 if options else 10)
@@ -3059,8 +3080,9 @@ def scrape_upc(soup):
     return upc   
 
 def search_game(query):
-    global active_game_data, active_taxonomy, active_contexts, active_title, active_perspective, active_game_is_new, active_source_taxonomy, active_source_game_data, active_specs
+    global active_game_data, active_taxonomy, active_contexts, active_game_is_new, active_source_taxonomy, active_source_game_data, active_specs
     global active_pricecharting_soup, active_pricecharting_requested_url, active_pricecharting_url
+    global active_game_in_collection
     active_pricecharting_soup = None
     active_pricecharting_requested_url = None
     active_pricecharting_url = None
@@ -3070,6 +3092,7 @@ def search_game(query):
     active_specs = {}
     active_source_taxonomy = {}
     active_game_is_new = False
+    active_game_in_collection = False
     
     if active_settings is None:
         return None
@@ -3092,6 +3115,7 @@ def search_game(query):
         active_game_data["release_date"] = ""
         active_game_data["url"] = ""
         active_game_data["upc"] = query if is_upc(query) else ""
+        active_game_in_collection = False
 
         active_contexts["payed"] = ""
         active_contexts["price"] = ""
@@ -3117,6 +3141,7 @@ def search_game(query):
     active_game_data["upc"] = match.get("upc", "")
     active_game_data["url"] = match.get("url", "")
     active_game_data["price_url"] = ""
+    active_game_in_collection = is_title_in_collection(active_game_data["title"], get_platform_key())
 
     for taxonomy_key in get_taxonomy_keys():
         value = match.get(taxonomy_key, "")
@@ -3204,7 +3229,7 @@ def selections_update(name, value):
         new_content = str(active_contexts.get("contents") or "").casefold()
         should_refetch = (name == "conditions" and (("sealed" in new_condition and "sealed" not in old_condition) or ("sealed" in old_condition and "sealed" not in new_condition))) or new_content != old_content
         price = None
-        if should_refetch and (active_game_data.get("title") != "" or active_game_data.get("upc") != ""):
+        if should_refetch and (active_game_data.get("title") != "" or active_game_data.get("upc") != "") and active_game_data.get("price_url") is not None:
             print(f"Debug: Getting new prices due to change in condition/content. Old Condition: {old_condition}, New Condition: {new_condition}, Old Content: {old_content}, New Content: {new_content}")
             price, _ = scrape_pricecharting_price(active_game_data.get("upc") or active_game_data.get("title", ""), known_url=active_game_data.get("price_url", None))
 
@@ -3266,10 +3291,8 @@ def settings_set_defaults(platform_index:int = 0):
             if active_taxonomy.get(setting):
                 continue  # Skip if the taxonomy field already has a value
             options = active_settings.get("taxonomy", {}).get(setting, "")
-            idx = int(value) if isinstance(value, int) else 0
-            idx = max(0, min(idx, len(options) - 1))  # Ensure idx is within bounds
-            active_taxonomy[setting] = options[idx] if options else ""
-            continue
+            default_value = value
+            active_taxonomy[setting] = (default_value if default_value in options else "")
 
     update_info_frame()
 
@@ -3516,7 +3539,6 @@ def update_export_statuses():
     return export_status
 
 def update_info_choice(key, value):
-    global active_title, active_perspective
     selected_value = value if isinstance(value, str) else value.get()
     if key in active_game_data:
         active_game_data[key] = selected_value
@@ -3526,7 +3548,7 @@ def update_info_choice(key, value):
         active_contexts[key] = selected_value
 
 def update_info_frame():
-    global infoframe, active_game_data, active_taxonomy, active_contexts, active_title, active_perspective, missing_fields
+    global infoframe, active_game_data, active_taxonomy, active_contexts, missing_fields
     if infoframe is None:
         return
     
@@ -3654,6 +3676,10 @@ def update_info_frame():
                 edit_button.configure(padding=(0, 0))
                 if display_value.endswith("..."):
                     Tooltip(value_label, text=str(value))
+        elif i == max_rows - 1:
+            collection_status = "In Collection" if active_game_in_collection else ""
+            collection_status_label = ttk.Label(infoframe, text=collection_status, style=f"InfoData{'Even' if row % 2 == 0 else 'Odd'}.TLabel")
+            collection_status_label.grid(row=row, column=1, sticky="nsew")
         else:
             value_label = ttk.Label(infoframe, text="", style=f"InfoData{'Even' if row % 2 == 0 else 'Odd'}.TLabel")
             value_label.grid(row=row, column=1, sticky="nsew")
