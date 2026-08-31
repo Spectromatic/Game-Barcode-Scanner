@@ -1564,9 +1564,15 @@ def handle_error(message):
 
 def handle_keypad_enter(event):
     focused_widget = event.widget
-    if isinstance(focused_widget, ttk.Button):
+    if isinstance(focused_widget, (tk.Button, ttk.Button)):
         focused_widget.invoke()
         return "break"
+
+    if isinstance(focused_widget, (ttk.Entry, tk.Entry)):
+        focused_widget.event_generate("<Return>")
+        return "break"
+
+    return None
 
 def handle_missing_field(widget, key):
     info = widget.grid_info()
@@ -1875,6 +1881,10 @@ def is_toggled(toggle):
 def is_upc(text: str) -> bool:
     # Check if the text is a 12 or 13 digit UPC
     return bool(re.fullmatch(r'\d{13}', text) or re.fullmatch(r'\d{12}', text))
+
+def is_url(text: str) -> bool:
+    # Check if the text is a valid URL
+    return bool(re.fullmatch(r'https?://[^\s]+', text))
 
 def modify_color(hex_color: str, amount: float) -> str:
     hex_color = hex_color.strip().lstrip('#')
@@ -2832,7 +2842,7 @@ def scrape_pricecharting_price(query, known_url=None):
     product_page = False
     response_url = None
     product_response_url = None
-    search_url = known_url if known_url is not None else None
+    search_url = known_url if known_url is not None and is_url(known_url) else None
 
     # Try title first since we generally have more luck with that
     if price_soup is None and known_url is None:
@@ -2844,7 +2854,7 @@ def scrape_pricecharting_price(query, known_url=None):
         search_url = f"https://www.pricecharting.com/search-products?type=prices&q={query}"
         _, price_soup, big_soup, response_url = get_specific_soup_by_class(search_url, "table", "js-addable hoverable-rows sortable")
 
-    if known_url is not None:
+    if known_url is not None and is_url(known_url):
         if (active_pricecharting_soup is not None and known_url in (active_pricecharting_url, active_pricecharting_requested_url)):
             big_soup = active_pricecharting_soup
             response_url = active_pricecharting_url
@@ -3229,7 +3239,7 @@ def selections_update(name, value):
         new_content = str(active_contexts.get("contents") or "").casefold()
         should_refetch = (name == "conditions" and (("sealed" in new_condition and "sealed" not in old_condition) or ("sealed" in old_condition and "sealed" not in new_condition))) or new_content != old_content
         price = None
-        if should_refetch and (active_game_data.get("title") != "" or active_game_data.get("upc") != "") and active_game_data.get("price_url") is not None:
+        if should_refetch and (active_game_data.get("title") != "" or active_game_data.get("upc") != "") and is_url(active_game_data.get("price_url", "")):
             print(f"Debug: Getting new prices due to change in condition/content. Old Condition: {old_condition}, New Condition: {new_condition}, Old Content: {old_content}, New Content: {new_content}")
             price, _ = scrape_pricecharting_price(active_game_data.get("upc") or active_game_data.get("title", ""), known_url=active_game_data.get("price_url", None))
 
