@@ -32,7 +32,7 @@ from tkinter import ttk
 from tkinter import messagebox, simpledialog
 from tooltip import Tooltip, CanvasTooltip
 from typing import Literal, cast
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urljoin
 
 import sys
 BASE_DIR = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else os.path.dirname(__file__)
@@ -434,7 +434,7 @@ def export_pdfs(platform, data, pdf_folder):
     return pdf_path
 
 def apply_taxonomy_style(key, menu):
-    style_name = ("ModifiedTaxonomy.TMenubutton" if is_source_taxonomy_changed(key) else "Taxonomy.TMenubutton")
+    style_name = ("ModifiedTaxonomy.TCombobox" if is_source_taxonomy_changed(key) else "Taxonomy.TCombobox")
     menu.configure(style=style_name)
 
 def button_focus_accept():
@@ -1387,6 +1387,78 @@ def get_platform_full_name(platform_key=None):
     platform_name = active_settings["platforms"].get(platform_key)
     return platform_name if platform_name else None
 
+def get_pricecharting_matching_row(search_table, title):
+    platform_alias = get_platform_alias() or ""
+    text_to_find = ("pal " + platform_alias.casefold() if is_toggled("use_pal") else platform_alias.casefold())
+
+    platform_rows = []
+
+    for platform_link in search_table.find_all("a", string=lambda text: (text and text_to_find in text.casefold())):
+        row = platform_link.find_parent("tr")
+        if row is not None and row not in platform_rows:
+            platform_rows.append(row)
+
+    modified_title = title
+    release_range = get_release_range()
+    edition = str(get_edition() or "").casefold()
+
+    if release_range and edition == "re-release":
+        modified_title = f"{title} {release_range}"
+
+    for row in platform_rows:
+        title_cell = row.find("td", class_="title")
+        title_link = title_cell.find("a") if title_cell else None
+        row_title = (title_link.get_text(" ", strip=True) if title_link else "")
+
+        normalized_row_title = get_simplified_text(row_title)
+
+        if normalized_row_title == modified_title:
+            return row
+
+        if not release_range and normalized_row_title == title:
+            return row
+
+    return None
+
+def get_pricecharting_price(query):
+    global active_contexts, active_game_data, active_pricecharting_soup
+    active_contexts["price"], item_link, is_product_page = scrape_pricecharting_price(query)
+    if item_link:
+        active_game_data["price_url"] = item_link
+        print(f"Debug: Got link scraping {item_link}")
+        pc_soup = get_soup(item_link) if active_pricecharting_soup is None else active_pricecharting_soup
+        upc = scrape_upc(pc_soup) if not is_upc(query) and is_product_page else ""
+        active_game_data["upc"] = upc if upc else active_game_data.get("upc", "")
+        cover_img_path = scrape_pricecharting_img(pc_soup) if is_product_page else ""
+    else:
+        active_game_data.setdefault('upc', '')
+        print("Debug: No UPC found from search query or item page.")
+    active_contexts["payed"] = ""
+
+def get_pricecharting_product_page(url, known_soup=None):
+    if not url or not is_url(url):
+        return None, None, None
+
+    found, full_prices, page_soup, response_url = get_specific_soup_by_id(url, "div", "full-prices", known_soup=known_soup)
+    if found:
+        return full_prices, page_soup, response_url
+
+    found, price_soup, page_soup, response_url = get_specific_soup_by_id(url, "table", "price_data", known_soup=known_soup)
+    if found:
+        return price_soup, page_soup, response_url
+
+    return None, page_soup, response_url
+
+def get_pricecharting_row_link(row):
+    title_cell = row.find("td", class_="title")
+    title_link = title_cell.find("a") if title_cell else None
+
+    if title_link is None:
+        return None
+
+    href = title_link.get("href")
+    return urljoin("https://www.pricecharting.com", href) if href else None
+
 def get_named_release_ranges():
     return [value for value in get_release_ranges() if value.strip()]
 
@@ -1504,26 +1576,10 @@ def get_taxonomy_keys() -> list:
         return []
     return list(active_settings.get("taxonomy", {}).keys())
 
-def get_taxonomy_data(key):
+def get_taxonomy_data(key) -> list[str]:
     if active_settings is None:
-        return {}
+        return []
     return active_settings.get("taxonomy", {}).get(key, [])
-
-def get_taxonomy_default_idx(key: str) -> int:
-    if active_settings is None:
-        return -1
-
-    defaults = active_settings.get("platform_defaults", {})
-    platform_defaults = defaults.get(get_platform_key(),defaults.get("Default", {}))
-
-    default_value = platform_defaults.get(key, "")
-    options = get_taxonomy_data(key)
-
-    if default_value in options:
-        return options.index(default_value)
-
-    # Missing or invalid taxonomy defaults have no selected index.
-    return -1
 
 def get_thumbnail_path(url=None):
     game_id = None
@@ -1821,7 +1877,12 @@ def is_title_in_collection(title, platform=None):
         return False
 
     platform = platform or get_platform_key()
-    collection_data = pd.read_excel(collection_path, sheet_name=platform, engine="openpyxl", dtype=str).fillna("")
+    if not platform:
+        return False
+
+    result = pd.read_excel(collection_path, sheet_name=platform, engine="openpyxl", dtype=str)
+    collection_data = result[platform] if isinstance(result, dict) else result
+    collection_data = collection_data.fillna("")
     title_column = next((column for column in collection_data.columns if str(column).casefold() == "title"), None)
 
     if title_column is None:
@@ -2829,77 +2890,91 @@ def scrape_pricecharting_price(query, known_url=None):
     skip = False
     if skip:
         print("Debug: Skipping PriceCharting scrape due to skip flag.")
-        return None, None
+        return None, None, False
 
     title = get_simplified_text(active_game_data.get('title')) if active_game_data else None
-    edition = str(get_edition() or "").casefold()
 
     if active_settings is None:
-        return None, None
+        return None, None, False
 
-    price_soup = None
-    big_soup = None
     product_page = False
     response_url = None
     product_response_url = None
-    search_url = known_url if known_url is not None and is_url(known_url) else None
+    product_url = None
+    price_soup = None
+    page_soup = None
+    search_url = None
+    search_table = None
+    search_page = None
+    search_response_url = None
 
-    # Try title first since we generally have more luck with that
-    if price_soup is None and known_url is None:
-        search_url = f"https://www.pricecharting.com/search-products?type=prices&q={title}"
-        _, price_soup, big_soup, response_url = get_specific_soup_by_class(search_url, "table", "js-addable hoverable-rows sortable")
+    # 1. Try known URL first.
+    if known_url and is_url(known_url):
+        price_soup, page_soup, product_url = get_pricecharting_product_page(known_url)
 
-    # Try the UPC as a fallback
-    if is_upc(query) and price_soup is None and known_url is None:
+    # 2. Try by title
+    if price_soup is None and not is_upc(query) and title != "":
+        search_url = f"https://www.pricecharting.com/search-products?type=prices&q=" + quote_plus(str(title))
+        found, search_table, search_page, search_response_url = get_specific_soup_by_class(search_url, "table", "js-addable hoverable-rows sortable")
+
+    # 3. Check if that was a product page we got redirected to
+    if search_page is not None and search_response_url and search_response_url != search_url:
+        page_soup = search_page
+        price_soup, page_soup, product_url = (get_pricecharting_product_page(search_response_url, known_soup=search_page))
+
+    # 4. If we have a search table, try to find a matching row and get its product page.
+    if price_soup is None and search_table is not None:
+        matching_row = get_pricecharting_matching_row(search_table, title)
+        if matching_row is not None:
+            product_link = get_pricecharting_row_link(matching_row)
+            if product_link:
+                price_soup, page_soup, product_url = (get_pricecharting_product_page(product_link))
+
+    # 5. If the original query was a UPC, try that
+    if price_soup is None and is_upc(query):
         search_url = f"https://www.pricecharting.com/search-products?type=prices&q={query}"
-        _, price_soup, big_soup, response_url = get_specific_soup_by_class(search_url, "table", "js-addable hoverable-rows sortable")
+        found, search_table, search_page, search_response_url = get_specific_soup_by_class(search_url, "table", "js-addable hoverable-rows sortable")
+        
+    # 6. UPC might also redirect to a direct hit, so check that next
+    if price_soup is None and search_page is not None and search_response_url and search_response_url != search_url:
+        page_soup = search_page
+        price_soup, page_soup, product_url = (get_pricecharting_product_page(search_response_url, known_soup=search_page))
 
-    if known_url is not None and is_url(known_url):
-        if (active_pricecharting_soup is not None and known_url in (active_pricecharting_url, active_pricecharting_requested_url)):
-            big_soup = active_pricecharting_soup
-            response_url = active_pricecharting_url
-            _, price_soup, _, product_response_url = get_specific_soup_by_id(known_url, "table", "price_data", known_soup=big_soup)
-        else:
-            product_page, price_soup, big_soup, product_response_url = get_specific_soup_by_id(known_url, "table", "price_data", known_soup=big_soup)
+    # 7. Now try the UPC query's search results
+    if price_soup is None and search_table is not None:
+        matching_row = get_pricecharting_matching_row(search_table, title)
+        if matching_row is not None:
+            product_link = get_pricecharting_row_link(matching_row)
+            if product_link:
+                price_soup, page_soup, product_url = (get_pricecharting_product_page(product_link))
 
-    if price_soup is None:
-        product_page, price_soup, big_soup, product_response_url = get_specific_soup_by_id(search_url, "table", "price_data", known_soup=big_soup)
-
-    if big_soup is not None:
-        product_page = True
-        active_pricecharting_soup = big_soup
+    # 8. Store the latest page and URL information
+    product_page = price_soup is not None and product_url is not None
+    if product_page:
+        active_pricecharting_soup = page_soup
         active_pricecharting_requested_url = search_url
-        active_pricecharting_url = response_url
+        active_pricecharting_url = product_url
 
     # Ensure that the redirected URL is used if available
     response_url = response_url or product_response_url
-
-    if known_url is None:
-        print(f"Debug: Search URL: {search_url}")
-    if price_soup is None:
-        print("Debug: No prices table found.")
-        return None, None
+    known_url = known_url or response_url
 
     # Get the mapped platform name from settings
     platform_alias = get_platform_alias()
     if platform_alias is None:
-        return None, None
+        return None, None, False
     
     # Find the row that contains the platform name
-    use_pal = is_toggled("use_pal")
-    text_to_find = "pal " + platform_alias.lower() if use_pal else platform_alias.lower()
     condition = get_condition()
     sealed = condition and 'sealed' in condition.lower()
     contents = get_contents()
     loose = contents and 'loose' in contents.lower()
 
-    if product_page:
-        platform_row = price_soup
-        item_link = response_url
+    if product_page and price_soup:
         price = None
         price_labels = {}
 
-        full_prices = big_soup.find("div", id="full-prices") if big_soup else None
+        full_prices = page_soup.find("div", id="full-prices") if page_soup else None
         # Use the full prices section if available, otherwise fall back to the price row
         if full_prices is None:
             if sealed:
@@ -2913,7 +2988,7 @@ def scrape_pricecharting_price(query, known_url=None):
             price_span = price_cell.find("span", class_="price") if price_cell else None
             price = price_span.get_text(" ", strip=True) if price_span else None
     
-            return price, item_link
+            return price, product_url, True
         
         for row in full_prices.find_all("tr"):
             cells = row.find_all("td")
@@ -2944,91 +3019,11 @@ def scrape_pricecharting_price(query, known_url=None):
 
         price = price_labels.get(price_label)
 
-        return price, item_link
+        return price, product_url, True
 
-    # Get all rows that contain the platform name, avoiding duplicates
-    platform_rows = []
-    for platform_link in price_soup.find_all("a", string=lambda text: (text and text_to_find in text.casefold())):
-        row = platform_link.find_parent("tr")
-        if row is not None and row not in platform_rows:
-            platform_rows.append(row)
-
-    # Among platform rows, find the one with the matching title
-    platform_row = None
-    modified_title = title
-    edition = str(get_edition() or "").casefold()
-    release_range = get_release_range()
-
-    # Adjust title for platinum edition if applicable
-    if release_range and edition == "re-release":
-        modified_title = f"{title} {release_range}"
-        print(f"Debug: Adjusted title for release range: {modified_title}")
-
-    for row in platform_rows:
-        title_cell = row.find("td", class_="title")
-        title_link = title_cell.find("a") if title_cell else None
-        row_title = title_link.get_text(" ", strip=True) if title_link else ""
-        row_title_normalized = get_simplified_text(row_title)
-
-        if row_title_normalized == modified_title:
-            platform_row = row
-            break
-
-        if not release_range and row_title_normalized == title:
-            platform_row = row
-            break
-
-    if platform_row is None:
-        print(f"Debug: No price info found for '{title}' ({platform_alias}).")
-        return None, None
-
-    # Get the link to item that matches the platform
-    item_cell = platform_row.find('td', class_='title')
-    item_link = item_cell.find('a')['href'] if item_cell else None
-    
-    price_type = 'New Price' if sealed else 'Loose' if loose else 'CIB Price'
-    # Get the corresponding Used Price or New Price column depending on the condition
-    price_header_text = price_soup.find('span', string=price_type)
-
-    # Get the sometime alternate header text if the expected one isn't found
-    if price_header_text is None:
-        price_type = 'High Price' if sealed else 'Low Price' if loose else 'Mid Price'
-        price_header_text = price_soup.find('span', string=price_type)
-
-    print(f"Debug: Price Header Text: {price_header_text}")
-    price_header = price_header_text.find_parent('th') if price_header_text else None
-
-    print(f"Debug: Price Header: {price_header}")
-
-    if price_header is None:
-        header_tr = price_soup.find('thead').find('tr') if price_soup.find('thead') else None
-        if header_tr is None:
-            return None, None
-
-        for th in header_tr.find_all('th'):
-            txt = th.get_text(separator=' ', strip=True).lower()
-            if price_type.lower() in txt or (loose and 'loose' in txt):
-                price_header = th
-                break
-
-    if price_header is None:
-        print(f"Debug: No '{price_type}' column found in prices table.")
-        return None, None
-    
-    price_index = price_header.parent.find_all('th').index(price_header)
-    price = None
-    for row in platform_row:
-        platform_tr = row.find_parent('tr')
-        row_cells = platform_tr.find_all(['th', 'td'])
-        price_cell = row_cells[price_index]
-        price_text = ' '.join(price_cell.stripped_strings)
-
-        if not re.search(r'[\d\£\$\€]', price_text):
-            continue
-        
-        price = price_text
-
-    return (price if price else None, item_link)
+    if price_soup is None:
+        print("Debug: No prices table found.")
+        return None, search_url, False
 
 def scrape_for_dt(soup, text):
     element = soup.find('dt', string=text)
@@ -3126,9 +3121,7 @@ def search_game(query):
         active_game_data["url"] = ""
         active_game_data["upc"] = query if is_upc(query) else ""
         active_game_in_collection = False
-
-        active_contexts["payed"] = ""
-        active_contexts["price"] = ""
+        get_pricecharting_price(query)
 
         def finish_unknown():
             settings_set_defaults()
@@ -3182,18 +3175,7 @@ def search_game(query):
                 active_selections[context].set(idx)
         print(f"Debug: Context '{context_singular}': {active_contexts[context]}")
 
-    active_contexts["price"], item_link = scrape_pricecharting_price(query)
-    if item_link:
-        active_game_data["price_url"] = item_link
-        print(f"Debug: Got link scraping {item_link}")
-        pc_soup = get_soup(item_link) if active_pricecharting_soup is None else active_pricecharting_soup
-        upc = scrape_upc(pc_soup) if not is_upc(query) else ""
-        active_game_data["upc"] = upc if upc else active_game_data.get("upc", "")
-        cover_img_path = scrape_pricecharting_img(pc_soup)
-    else:
-        active_game_data.setdefault('upc', '')
-        print("Debug: No UPC found from search query or item page.")
-    active_contexts["payed"] = ""
+    get_pricecharting_price(query)
     
     def finish():
         update_button_states("normal")
@@ -3705,20 +3687,19 @@ def update_info_frame():
         options = get_taxonomy_data(key) if key else []
 
         if key and options:
-            pd_idx = get_taxonomy_default_idx(key)
-            platform_default = options[pd_idx] if options and 0 <= pd_idx < len(options) else None
-
-            # initial selection preference: explicit value > platform default > first option > empty
-            
-            initial = value if value else (platform_default if platform_default in options else options[0] if options else "")
+            platform_defaults = active_settings.get("platform_defaults", {})
+            platform_key = get_platform_key()
+            selected_platform_defaults = platform_defaults.get(platform_key, platform_defaults.get("Default", {}))
+            platform_default = selected_platform_defaults.get(key, "")
+            initial = value or (platform_default if platform_default in options else "")
 
             var = tk.StringVar(value=initial)
 
             taxonomy_modified = is_source_taxonomy_changed(key)
-            style_name = ("ModifiedTaxonomy.TMenubutton" if taxonomy_modified else "Taxonomy.TMenubutton")
+            style_name = ("ModifiedTaxonomy.TCombobox" if taxonomy_modified else "Taxonomy.TCombobox")
 
-            menu = ttk.OptionMenu(infoframe, var, var.get(), *options)
-            menu.configure(style=style_name, padding=(0, 0))
+            menu = ttk.Combobox(infoframe, textvariable=var, values=options, state="readonly", height=15)
+            menu.configure(style=style_name)
             menu.grid(row=row, column=3, sticky="nsew")
             menu.bind("<Button-1>", lambda event, widget=menu: widget.focus_set(), add="+")
             missing_fields[key] = menu
@@ -3729,22 +3710,6 @@ def update_info_frame():
 
             var.trace_add("write", on_taxonomy_change)
             apply_taxonomy_style(key, menu)
-            
-            def _make_cycle_handler(opts, v, direction):
-                def handler(event):
-                    if not opts:
-                        return "break"
-                    try:
-                        i = opts.index(v.get())
-                    except ValueError:
-                        i = 0
-                    i = (i + direction) % len(opts)
-                    v.set(opts[i])
-                    return "break"
-                return handler
-
-            menu.bind("<Up>", _make_cycle_handler(options, var, -1))
-            menu.bind("<Down>", _make_cycle_handler(options, var, 1))
         else:
             value_label = ttk.Label(infoframe, text=handle_ellipsis(handle_single_option(value)), style=f"InfoData{'Even' if row % 2 == 0 else 'Odd'}.TLabel")
             value_label.grid(row=row, column=3, sticky="nsew")
@@ -3869,7 +3834,7 @@ def update_source_record():
 
         existing_row = source_data.loc[matching_row]
         existing_added = existing_row["added"].iloc[0]
-        existing_modified = existing_row["modified"].iloc[0] if "modified" in existing_row else None
+        existing_modified = existing_row["modified"].iloc[0] if "modified" in existing_row else ""
 
         record = get_filtered_game_data()
         record.update({
@@ -4042,8 +4007,8 @@ def main():
 
     style.configure("ModifiedInfoDataEven.TLabel", background=modified_color, foreground="#000000")
     style.configure("ModifiedInfoDataOdd.TLabel", background=modified_color, foreground="#000000")
-    style.configure("ModifiedTaxonomy.TMenubutton", background=modified_color, foreground="#000000", lightcolor=modify_color(modified_color, 0.2), darkcolor=modify_color(modified_color, -0.1), bordercolor=modify_color(modified_color, -0.2))
-    style.map("ModifiedTaxonomy.TMenubutton", background=[("active", modified_color), ("pressed", modified_color), ("!disabled", modified_color)])
+    style.configure("ModifiedTaxonomy.TCombobox", background=modified_color, foreground="#000000", lightcolor=modify_color(modified_color, 0.2), darkcolor=modify_color(modified_color, -0.1), bordercolor=modify_color(modified_color, -0.2))
+    style.map("ModifiedTaxonomy.TCombobox", background=[("active", modified_color), ("pressed", modified_color), ("!disabled", modified_color)])
     # Select Columns button style on the collection tab
     style.configure("SelectColumns.TButton", background=modified_color, foreground="#000000", lightcolor=modify_color(modified_color, 0.3), darkcolor=modify_color(modified_color, -0.1), bordercolor=modify_color(modified_color, -0.2), padding=0, relief="raised")
     style.map("SelectColumns.TButton", background=[("active", modify_color(modified_color, -0.05)), ("pressed", modified_color), ("!disabled", modified_color)])
