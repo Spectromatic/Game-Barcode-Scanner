@@ -148,7 +148,7 @@ def add_url(key):
 
     # Scrape for the price if we don't already have one
     if not active_contexts.get("price"):
-        price, _ = scrape_pricecharting_price(active_game_data.get("upc") or active_game_data.get("title", ""), known_url=new_url)
+        price, _, _ = scrape_pricecharting_price(active_game_data.get("upc") or active_game_data.get("title", ""), known_url=new_url)
         if price is not None:
             active_contexts["price"] = price
 
@@ -588,6 +588,7 @@ def cycle_setup(name, direction):
             searchentry.focus_set()
     return handler
 
+# TODO: If the title changes on an unknown game, try refetching from pricecharting with the new name
 def edit_data(data_dict, parent, key):
     value_var = tk.StringVar(value=str(data_dict.get(key, "")))
 
@@ -600,8 +601,8 @@ def edit_data(data_dict, parent, key):
 
         if key.casefold() == "price_url":
             if new_value:
-                query = (data_dict.get("upc") or data_dict.get("title", ""))
-                price, _ = scrape_pricecharting_price(query, known_url=new_value)
+                query = (data_dict.get("title", "") or data_dict.get("upc"))
+                price, _, _ = scrape_pricecharting_price(query, known_url=new_value)
 
                 if price is not None:
                     active_contexts["price"] = price
@@ -1389,14 +1390,30 @@ def get_platform_full_name(platform_key=None):
 
 def get_pricecharting_matching_row(search_table, title):
     platform_alias = get_platform_alias() or ""
+    platform_alias = platform_alias.casefold()
+    platform_pal = f"pal {platform_alias}"
     text_to_find = ("pal " + platform_alias.casefold() if is_toggled("use_pal") else platform_alias.casefold())
 
-    platform_rows = []
+    pal_rows = []
+    regular_rows = []
 
-    for platform_link in search_table.find_all("a", string=lambda text: (text and text_to_find in text.casefold())):
+    for platform_link in search_table.find_all("a", href=True):
+        platform_text = platform_link.get_text(" ", strip=True).casefold()
+        if platform_text not in {platform_alias, platform_pal}:
+            continue
+
         row = platform_link.find_parent("tr")
-        if row is not None and row not in platform_rows:
-            platform_rows.append(row)
+        if row is None:
+            continue
+
+        if platform_text == platform_pal:
+            if row not in pal_rows:
+                pal_rows.append(row)
+        else:
+            if row not in regular_rows:
+                regular_rows.append(row)
+
+    platform_rows = (pal_rows + regular_rows if is_toggled("use_pal") else regular_rows)
 
     modified_title = title
     release_range = get_release_range()
@@ -1430,6 +1447,7 @@ def get_pricecharting_price(query):
         upc = scrape_upc(pc_soup) if not is_upc(query) and is_product_page else ""
         active_game_data["upc"] = upc if upc else active_game_data.get("upc", "")
         cover_img_path = scrape_pricecharting_img(pc_soup) if is_product_page else ""
+        got_info = scrape_pricecharting_info() if is_product_page else None
     else:
         active_game_data.setdefault('upc', '')
         print("Debug: No UPC found from search query or item page.")
@@ -2885,19 +2903,76 @@ def scrape_pricecharting_img(soup, force=False):
         print(f"Debug: Failed to save PriceCharting image: {exc}")
         return None
 
+def scrape_pricecharting_info():
+    global active_game_data, active_taxonomy
+    if active_pricecharting_soup is None or active_pricecharting_url is None:
+        return None
+
+    attribute_table = active_pricecharting_soup.find("table", id="attribute")
+    if attribute_table is None:
+        print("Debug: No PriceCharting attribute table found.")
+        return False
+
+    details = {}
+
+    for row in attribute_table.find_all("tr"):
+        title_cell = row.find("td", class_="title")
+        details_cell = row.find("td", class_="details")
+
+        if title_cell is None or details_cell is None:
+            continue
+
+        label = title_cell.get_text(" ", strip=True).rstrip(":").casefold()
+        value = details_cell.get_text(" ", strip=True)
+
+        if value.casefold() in {"", "-", "none"}:
+            continue
+
+        details[label] = value
+
+    ratings_mapping = {
+        "adults only": "AO",
+        "teen": "T",
+        "everyone": "E",
+        "early childhood": "EC",
+        "mature": "M",
+        "rating pending": "",
+    }
+
+    age_rating = details.get("esrb rating", "").casefold()
+    player_count = details.get("player count", "").casefold().replace("players", "").replace("player", "").strip()
+    player_count = int(player_count) if player_count.isdigit() else 0
+    if player_count > 1 and "player" in active_taxonomy:
+        active_taxonomy["player"] = "SP/MP"
+
+    active_game_data["developer"] = details.get("developer", "") if not str(active_game_data.get("developer", "")).strip() else active_game_data["developer"]
+    active_game_data["publisher"] = details.get("publisher", "") if not str(active_game_data.get("publisher", "")).strip() else active_game_data["publisher"]
+    active_game_data["release_date"] = details.get("release date", "")[-4:] if not str(active_game_data.get("release_date", "")).strip() else active_game_data["release_date"]
+    active_game_data["age_rating"] = ratings_mapping.get(age_rating, "") if not str(active_game_data.get("age_rating", "")).strip() else active_game_data["age_rating"]
+
+    return True
+
 def scrape_pricecharting_price(query, known_url=None):
+    """
+    Scrapes the price of a game from PriceCharting based on the given query.
+
+    Parameters:
+    - query: The game's title or UPC.
+    - known_url: An optional known URL for the game's PriceCharting page.
+
+    Returns:
+    A tuple containing:
+    - The price if found, otherwise None.
+    - The product URL if found, otherwise the search URL.
+    - A boolean indicating whether a product page was found.
+    """
     global active_pricecharting_soup, active_pricecharting_requested_url, active_pricecharting_url
-    skip = False
-    if skip:
-        print("Debug: Skipping PriceCharting scrape due to skip flag.")
-        return None, None, False
 
     title = get_simplified_text(active_game_data.get('title')) if active_game_data else None
 
     if active_settings is None:
         return None, None, False
 
-    product_page = False
     response_url = None
     product_response_url = None
     product_url = None
@@ -2948,12 +3023,15 @@ def scrape_pricecharting_price(query, known_url=None):
             if product_link:
                 price_soup, page_soup, product_url = (get_pricecharting_product_page(product_link))
 
-    # 8. Store the latest page and URL information
-    product_page = price_soup is not None and product_url is not None
-    if product_page:
-        active_pricecharting_soup = page_soup
-        active_pricecharting_requested_url = search_url
-        active_pricecharting_url = product_url
+    # 8. If we still haven't found price soup, then all hope is lost
+    if price_soup is None or page_soup is None:
+        print("Debug: No prices table found.")
+        return None, search_url, False
+
+    # 9. Store the latest page and URL information
+    active_pricecharting_soup = page_soup
+    active_pricecharting_requested_url = search_url
+    active_pricecharting_url = product_url if product_url else None
 
     # Ensure that the redirected URL is used if available
     response_url = response_url or product_response_url
@@ -2970,60 +3048,56 @@ def scrape_pricecharting_price(query, known_url=None):
     contents = get_contents()
     loose = contents and 'loose' in contents.lower()
 
-    if product_page and price_soup:
-        price = None
-        price_labels = {}
+    price = None
 
-        full_prices = page_soup.find("div", id="full-prices") if page_soup else None
-        # Use the full prices section if available, otherwise fall back to the price row
-        if full_prices is None:
-            if sealed:
-                price_cell_id = "new_price"
-            elif loose:
-                price_cell_id = "used_price"
-            else:
-                price_cell_id = "complete_price"
-    
-            price_cell = price_soup.find("td", id=price_cell_id)
-            price_span = price_cell.find("span", class_="price") if price_cell else None
-            price = price_span.get_text(" ", strip=True) if price_span else None
-    
-            return price, product_url, True
-        
-        for row in full_prices.find_all("tr"):
-            cells = row.find_all("td")
-            if len(cells) < 2:
-                continue
-
-            label = cells[0].get_text(" ", strip=True).casefold()
-            value = cells[1].get_text(" ", strip=True)
-            if value != "-":
-                price_labels[label] = value
-
+    # If the full price section isn't there, scrape the price row
+    full_prices = page_soup.find("div", id="full-prices")
+    if full_prices is None:
         if sealed:
-            price_label = "new"
+            price_cell_id = "new_price"
+        elif loose:
+            price_cell_id = "used_price"
         else:
-            content_value = str(contents or "").casefold()
+            price_cell_id = "complete_price"
 
-            price_label = {
-                "cib": "complete",
-                "no manual": "item & box",
-                "no case": "item & manual",
-                "no sleeve": "item & box",
-                "manual only": "manual only",
-                "sleeve only": "manual only",
-                "case only": "box only",
-                "loose disc": "loose",
-                "nothing": "loose"
-            }.get(content_value, "complete")
-
-        price = price_labels.get(price_label)
+        price_cell = price_soup.find("td", id=price_cell_id)
+        price_span = price_cell.find("span", class_="price") if price_cell else None
+        price = price_span.get_text(" ", strip=True) if price_span else None
 
         return price, product_url, True
 
-    if price_soup is None:
-        print("Debug: No prices table found.")
-        return None, search_url, False
+    # Scrape the full price table
+    price_labels = {}
+    for row in price_soup.find_all("tr"):
+        cells = row.find_all("td")
+        if len(cells) < 2:
+            continue
+
+        label = cells[0].get_text(" ", strip=True).casefold()
+        value = cells[1].get_text(" ", strip=True)
+        if value != "-":
+            price_labels[label] = value
+
+    if sealed:
+        price_label = "new"
+    else:
+        content_value = str(contents or "").casefold()
+
+        price_label = {
+            "cib": "complete",
+            "no manual": "item & box",
+            "no case": "item & manual",
+            "no sleeve": "item & box",
+            "manual only": "manual only",
+            "sleeve only": "manual only",
+            "case only": "box only",
+            "loose disc": "loose",
+            "nothing": "loose"
+        }.get(content_value, "complete")
+
+    price = price_labels.get(price_label)
+
+    return price, product_url, True
 
 def scrape_for_dt(soup, text):
     element = soup.find('dt', string=text)
@@ -3223,7 +3297,7 @@ def selections_update(name, value):
         price = None
         if should_refetch and (active_game_data.get("title") != "" or active_game_data.get("upc") != "") and is_url(active_game_data.get("price_url", "")):
             print(f"Debug: Getting new prices due to change in condition/content. Old Condition: {old_condition}, New Condition: {new_condition}, Old Content: {old_content}, New Content: {new_content}")
-            price, _ = scrape_pricecharting_price(active_game_data.get("upc") or active_game_data.get("title", ""), known_url=active_game_data.get("price_url", None))
+            price, _, _ = scrape_pricecharting_price(active_game_data.get("upc") or active_game_data.get("title", ""), known_url=active_game_data.get("price_url", None))
 
         if price is not None:
             active_contexts["price"] = price
