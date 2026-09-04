@@ -2457,6 +2457,47 @@ def open_platform_defaults_window():
     close_button = ttk.Button(platform_defaults_frame, text="Close", command=platform_defaults_window.destroy)
     close_button.grid(row=2, column=0, sticky="nsew", padx=4, pady=4)
 
+def open_release_ranges_window():
+    if active_settings is None:
+        return
+
+    release_ranges_window = tk.Toplevel(class_="GBScan")
+    release_ranges_window.title("GBScan - Edit Re-release Ranges")
+    release_ranges_window.geometry("600x600")
+    release_ranges_window.columnconfigure(0, weight=1)
+    release_ranges_window.rowconfigure(0, weight=1)
+
+    frame = ttk.LabelFrame(release_ranges_window, text="Re-release Ranges", padding=4)
+    frame.grid(row=0, column=0, sticky="nsew", padx=4, pady=4)
+    frame.columnconfigure(1, weight=1)
+
+    release_ranges = active_settings.setdefault("release_ranges", {})
+    entries = {}
+
+    ttk.Label(frame, text="Enter ranges separated by semicolons:").grid(row=0, column=0, columnspan=2, sticky="w", padx=4, pady=4)
+
+    def save_ranges(platform, variable):
+        if active_settings is None:
+            return
+
+        ranges = [value.strip() for value in variable.get().split(";") if value.strip()]
+        release_ranges[platform] = ranges
+        settings_save()
+
+    for row, platform in enumerate(get_platforms(), start=1):
+        ttk.Label(frame, text=platform).grid(row=row, column=0, sticky="w", padx=4, pady=2)
+
+        range_var = tk.StringVar(value="; ".join(release_ranges.get(platform, [])))
+        range_entry = ttk.Entry(frame, textvariable=range_var)
+        range_entry.grid(row=row, column=1, sticky="ew", padx=4, pady=2)
+
+        range_entry.bind("<FocusOut>", lambda event, p=platform, v=range_var: save_ranges(p, v))
+        range_entry.bind("<Return>", lambda event, p=platform, v=range_var: save_ranges(p, v))
+        entries[platform] = range_var
+
+    close_button = ttk.Button(frame, text="Close", command=release_ranges_window.destroy)
+    close_button.grid(row=len(entries) + 1, column=0, columnspan=2, sticky="ew", padx=4, pady=4)
+
 def populate_context_choices(frame, name):
     # Populate a menu with the given options
     label_text = name.capitalize().replace("_", " ")
@@ -2562,6 +2603,8 @@ def populate_context_setup(frame, entries, row_idx, main_contextframe) -> int:
         child.destroy()
     
     for context_choice in get_fixed_contexts():
+        if context_choice == "release_range":
+            continue
         label = ttk.Label(frame, text=f"{context_choice.capitalize()}:")
         label.grid(row=row_idx, column=0, sticky=tk.W)
         stringvar = tk.StringVar(value="; ".join(active_settings.get("context", {}).get(context_choice, [])))
@@ -4252,6 +4295,7 @@ def main():
     exclusionframe.columnconfigure(1, weight=1)
     exclusionframe.columnconfigure(2, weight=1)
     exclusionframe.columnconfigure(3, weight=1)
+    exclusionframe.columnconfigure(4, weight=1)
     frames_padded.append(exclusionframe)
     setuprow += 1
 
@@ -4266,6 +4310,9 @@ def main():
 
     ecustomcolorsbutton = ttk.Button(exclusionframe, text="Edit Custom Colors", command=lambda: open_custom_colors_window())
     ecustomcolorsbutton.grid(row=0, column=3, sticky="nsew")
+
+    ereleasebutton = ttk.Button(exclusionframe, text="Edit Re-release Ranges", command=lambda: open_release_ranges_window())
+    ereleasebutton.grid(row=0, column=4, sticky="nsew")
 
     # Display all the toggles from the settings file
     togglesframe = ttk.LabelFrame(setup_tab, text="Toggles", padding="4")
