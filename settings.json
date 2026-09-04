@@ -110,7 +110,8 @@
             "Best Of Infogrames",
             "Dice Multimedia",
             "Play 4 Less",
-            "PC Best Buy"
+            "PC Best Buy",
+            "Best Games"
         ]
     },
     "custom_context": {},
@@ -256,6 +257,7 @@
             "Counter-Terror",
             "Crime",
             "Cyberpunk",
+            "Detective",
             "Dystopian",
             "Everyday",
             "Fantasy",
@@ -404,7 +406,7 @@
         "Edition",
         "Developer",
         "Publisher",
-        "Payed",
+        "Paid",
         "Value",
         "Sold",
         "DOS",
@@ -538,7 +540,7 @@
             "width": 20,
             "align": "left"
         },
-        "Payed": {
+        "Paid": {
             "width": 5,
             "align": "right"
         },
@@ -894,6 +896,25 @@
             "value_end": "#FFB2B2",
             "release_date_start": "#76BFD0",
             "release_date_end": "#C5E4EB"
+        },
+        "platform_colors": {
+            "PC": "#3F5F73",
+            "PS1": "#D97757",
+            "PS2": "#6A9A8B",
+            "PS3": "#C6A15B",
+            "PS4": "#7A6FA8",
+            "PSP": "#4F86A8",
+            "Switch": "#B35C75",
+            "Wii": "#759C5E",
+            "DS": "#3F5F73",
+            "3DS": "#D97757",
+            "GB": "#6A9A8B",
+            "GC": "#C6A15B",
+            "N64": "#7A6FA8",
+            "XBOX360": "#4F86A8",
+            "XBOX": "#B35C75",
+            "GBA": "#759C5E",
+            "Evercade": "#3F5F73"
         }
     },
     "shortcuts": {

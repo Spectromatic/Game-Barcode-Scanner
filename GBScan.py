@@ -21,12 +21,11 @@ from PIL import Image, ImageDraw, ImageFont, ImageTk
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT
 from reportlab.lib.pagesizes import landscape, A4
-from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import mm
-from reportlab.platypus import LongTable, TableStyle, Paragraph
-from reportlab.lib.styles import ParagraphStyle
-from reportlab.platypus import LongTable, SimpleDocTemplate, Paragraph
+from reportlab.platypus import LongTable, TableStyle, Paragraph, SimpleDocTemplate, Spacer
 from reportlab.pdfbase.pdfmetrics import stringWidth
+from reportlab.graphics.barcode import createBarcodeDrawing
 from xml.sax.saxutils import escape
 from tkinter import ttk
 from tkinter import messagebox, simpledialog
@@ -148,9 +147,8 @@ def add_url(key):
 
     # Scrape for the price if we don't already have one
     if not active_contexts.get("price"):
-        price, _, _ = scrape_pricecharting_price(active_game_data.get("upc") or active_game_data.get("title", ""), known_url=new_url)
-        if price is not None:
-            active_contexts["price"] = price
+        query = active_game_data.get("upc") or active_game_data.get("title", "")
+        get_pricecharting_price(query, known_url=new_url)
 
     if active_game_is_new:
         active_game_data[key] = new_url
@@ -181,6 +179,28 @@ def append_new_source_record():
 
     source_data = pd.concat([source_data, pd.DataFrame([new_row])], ignore_index=True)
     source_data.to_excel(source_file, engine="openpyxl", index=False)
+
+def create_barcode(value):
+    for candidate in str(value).split(","):
+        digits = re.sub(r"\D", "", candidate)
+
+        if len(digits) == 12:
+            digits = "0" + digits
+
+        if len(digits) == 13:
+            try:
+                return createBarcodeDrawing(
+                    "EAN13",
+                    value=digits,
+                    barWidth=0.17 * mm,
+                    barHeight=2.8 * mm,
+                    humanReadable=True,
+                    fontSize=4.0
+                )
+            except (ValueError, TypeError):
+                return None
+
+    return None
 
 def create_source_diff():
     # Create a file in the Diff directory to track new titles
@@ -286,6 +306,8 @@ def export_pdfs(platform, data, pdf_folder):
     title_style = styles["Heading2"]
     header_style = ParagraphStyle("PdfHeader", parent=styles["Normal"], fontName="Helvetica-Bold", fontSize=7, leading=8, textColor=colors.white)
     cell_style = ParagraphStyle("PdfCell", parent=styles["Normal"], fontName="Courier", fontSize=6, leading=7)
+    barcode_height = create_barcode("0000000000000")
+    barcode_height = barcode_height.height if barcode_height is not None else 20
     paragraph_alignments = {"left": TA_LEFT, "center": TA_CENTER, "right": TA_RIGHT}
 
     # PDF Page Setup
@@ -301,7 +323,8 @@ def export_pdfs(platform, data, pdf_folder):
     header_data = []
     for column_index, (column, column_width) in enumerate(zip(data.columns, column_widths)):
         character_count = max(1, int(column_export[str(column)]["width"]))
-        header_text = str(column)[:character_count]
+        #header_text = str(column)[:character_count]
+        header_text = ("Barcode" if str(column).casefold() == "upc" else str(column)[:character_count])
 
         available_width = max(1, column_width - cell_padding)
         while (len(header_text) > 1 and stringWidth(header_text, header_style.fontName, header_style.fontSize,) > available_width):
@@ -343,7 +366,11 @@ def export_pdfs(platform, data, pdf_folder):
                 align = "left"
 
             column_cell_style = ParagraphStyle(f"PdfCell{column_index}", parent=cell_style, alignment=cast(Literal[0, 1, 2, 4], paragraph_alignments[align]))
-            table_row.append(Paragraph(cell_text, column_cell_style))
+            if str(column).casefold() == "upc":
+                barcode = create_barcode(value_text)
+                table_row.append(barcode if barcode is not None else Spacer(1, barcode_height))
+            else:
+                table_row.append(Paragraph(cell_text, column_cell_style))
 
         table_data.append(table_row)
 
@@ -473,7 +500,7 @@ def clear_infoframe():
         active_contexts = {}
         for k in get_all_contexts():
             active_contexts[k] = get_context_data(k)
-        for ctx in ("payed", "price"):
+        for ctx in ("paid", "price"):
             active_contexts[ctx] = ""
 
         # Render the Add-buttons via the existing renderer
@@ -588,9 +615,9 @@ def cycle_setup(name, direction):
             searchentry.focus_set()
     return handler
 
-# TODO: If the title changes on an unknown game, try refetching from pricecharting with the new name
 def edit_data(data_dict, parent, key):
-    value_var = tk.StringVar(value=str(data_dict.get(key, "")))
+    original_var = str(data_dict.get(key, ""))
+    value_var = tk.StringVar(value=original_var)
 
     entry = ttk.Entry(parent, textvariable=value_var)
     entry.grid(row=0, column=0, sticky="nsew")
@@ -599,19 +626,13 @@ def edit_data(data_dict, parent, key):
         new_value = value_var.get().strip()
         data_dict[key] = new_value
 
+        if key.casefold() == "title" and active_game_is_new and new_value and new_value != original_var:
+            get_pricecharting_price(new_value)
+
         if key.casefold() == "price_url":
             if new_value:
                 query = (data_dict.get("title", "") or data_dict.get("upc"))
-                price, _, _ = scrape_pricecharting_price(query, known_url=new_value)
-
-                if price is not None:
-                    active_contexts["price"] = price
-
-                price_soup = get_soup(new_value)
-                image_path = scrape_pricecharting_img(price_soup, force=True)
-
-                if image_path is not None:
-                    update_thumbnail(image_path)
+                get_pricecharting_price(query, known_url=new_value)
             else:
                 active_contexts["price"] = ""
         
@@ -723,7 +744,7 @@ def game_accept():
         "Publisher": [active_game_data.get('publisher')] if active_game_data.get('publisher') else "",
         "Age Rating": [active_game_data.get('age_rating')] if active_game_data.get('age_rating') else "",
         "Moby Score": [active_game_data.get('moby_score')] if active_game_data.get('moby_score') else "",
-        "Payed": [active_contexts.get('payed')] if active_contexts.get('payed') else "",
+        "Paid": [active_contexts.get('paid')] if active_contexts.get('paid') else "",
         "Value": [active_contexts.get('price')] if active_contexts.get('price') else "",
         **{key: [value] for key, value in get_os_record_fields().items()},
         "DX": [active_specs.get('DX', '')] if active_specs else "",
@@ -876,12 +897,12 @@ def get_collection_stats():
 
     stats = {
         "titles": 0,
-        "payed": 0.0,
+        "paid": 0.0,
         "value": 0.0,
         "platforms": 0,
         "platform_titles": {},
         "platform_value": {},
-        "platform_payed": {}
+        "platform_paid": {}
     }
 
     if active_settings is None or not collection_path.exists():
@@ -894,12 +915,12 @@ def get_collection_stats():
         columns = {str(column).strip().casefold(): column for column in data.columns}
 
         title_column = columns.get("title")
-        payed_column = columns.get("payed")
+        paid_column = columns.get("paid")
         value_column = columns.get("value")
 
-        if payed_column is not None:
-            payed_values = (data[payed_column].astype(str).str.strip().str.replace("$", "", regex=False).str.replace(",", ".", regex=False))
-            stats["payed"] += pd.to_numeric(payed_values, errors="coerce").fillna(0).sum()
+        if paid_column is not None:
+            paid_values = (data[paid_column].astype(str).str.strip().str.replace("$", "", regex=False).str.replace(",", ".", regex=False))
+            stats["paid"] += pd.to_numeric(paid_values, errors="coerce").fillna(0).sum()
 
         if value_column is not None:
             value_values = (data[value_column].astype(str).str.strip().str.replace("$", "", regex=False).str.replace(",", ".", regex=False))
@@ -911,7 +932,7 @@ def get_collection_stats():
         stats["platform_titles"][platform] = data[title_column].astype(str).str.strip().ne("").sum()
         stats["platforms"] += 1
         stats["platform_value"][platform] = pd.to_numeric(value_values, errors="coerce").fillna(0).sum() * (active_settings["currency_conversion"]["conversion_factor"] if is_toggled("use_currency_conversion") else 1) if value_column is not None else 0
-        stats["platform_payed"][platform] = pd.to_numeric(payed_values, errors="coerce").fillna(0).sum() if payed_column is not None else 0
+        stats["platform_paid"][platform] = pd.to_numeric(paid_values, errors="coerce").fillna(0).sum() if paid_column is not None else 0
 
     return stats
 
@@ -1437,21 +1458,27 @@ def get_pricecharting_matching_row(search_table, title):
 
     return None
 
-def get_pricecharting_price(query):
+def get_pricecharting_price(query, known_url=None):
     global active_contexts, active_game_data, active_pricecharting_soup
-    active_contexts["price"], item_link, is_product_page = scrape_pricecharting_price(query)
+    print(f"Debug: Getting price for query '{query}' with known URL '{known_url}'")
+    active_contexts["price"], item_link, is_product_page = scrape_pricecharting_price(query, known_url=known_url)
     if item_link:
         active_game_data["price_url"] = item_link
         print(f"Debug: Got link scraping {item_link}")
         pc_soup = get_soup(item_link) if active_pricecharting_soup is None else active_pricecharting_soup
-        upc = scrape_upc(pc_soup) if not is_upc(query) and is_product_page else ""
-        active_game_data["upc"] = upc if upc else active_game_data.get("upc", "")
-        cover_img_path = scrape_pricecharting_img(pc_soup) if is_product_page else ""
-        got_info = scrape_pricecharting_info() if is_product_page else None
+
+        if is_product_page:
+            upc = scrape_upc(pc_soup) if not is_upc(query) else ""
+            active_game_data["upc"] = upc or active_game_data.get("upc", "")
+            image_path = scrape_pricecharting_img(pc_soup)
+            scrape_pricecharting_info() if is_product_page else None
+
+            if image_path is not None:
+                update_thumbnail(image_path)
     else:
         active_game_data.setdefault('upc', '')
         print("Debug: No UPC found from search query or item page.")
-    active_contexts["payed"] = ""
+    active_contexts["paid"] = ""
 
 def get_pricecharting_product_page(url, known_soup=None):
     if not url or not is_url(url):
@@ -2988,7 +3015,7 @@ def scrape_pricecharting_price(query, known_url=None):
         price_soup, page_soup, product_url = get_pricecharting_product_page(known_url)
 
     # 2. Try by title
-    if price_soup is None and not is_upc(query) and title != "":
+    if price_soup is None and title != "":
         search_url = f"https://www.pricecharting.com/search-products?type=prices&q=" + quote_plus(str(title))
         found, search_table, search_page, search_response_url = get_specific_soup_by_class(search_url, "table", "js-addable hoverable-rows sortable")
 
@@ -3179,7 +3206,6 @@ def search_game(query):
     match = get_game_source_data(query)
 
     if match is None:
-        handle_error(f"No matching game found for query '{query}'")
         active_game_is_new = True
 
         active_game_data = {key: "" for key in active_settings.get("scraped_data", {})}
@@ -3347,18 +3373,16 @@ def settings_set_defaults(platform_index:int = 0):
     platform_defaults = platform_settings.get(platform_key, platform_settings.get("Default", {}))
 
     for setting, value in platform_defaults.items():
+        # Taxonomy
+        if setting in active_settings.get("taxonomy", {}):
+            options = active_settings.get("taxonomy", {}).get(setting, "")
+            active_taxonomy[setting] = value if value in options else ""
+            continue
+
         # Contexts
         if isinstance(active_selections.get(setting), tk.IntVar):
             active_selections[setting].set(value)
             continue
-
-        # Taxonomy
-        if setting in active_settings.get("taxonomy", {}):
-            if active_taxonomy.get(setting):
-                continue  # Skip if the taxonomy field already has a value
-            options = active_settings.get("taxonomy", {}).get(setting, "")
-            default_value = value
-            active_taxonomy[setting] = (default_value if default_value in options else "")
 
     update_info_frame()
 
@@ -3545,17 +3569,6 @@ def update_collection_pie_chart(chart_name, values, title=None):
     chart_right = chart_left + chart_size
     chart_bottom = chart_top + chart_size
 
-    colors = (
-        "#3F5F73",
-        "#D97757",
-        "#6A9A8B",
-        "#C6A15B",
-        "#7A6FA8",
-        "#4F86A8",
-        "#B35C75",
-        "#759C5E",
-    )
-
     if title:
         canvas.create_text(chart_width // 4, 20, text=title, anchor="center")
 
@@ -3563,10 +3576,11 @@ def update_collection_pie_chart(chart_name, values, title=None):
     legend_x = chart_right + 25
     legend_y = 25
     canvas_tooltips = []
+    platform_colors = active_settings.get("theming", {}).get("platform_colors", {}) if active_settings else {}
 
     for index, (label, value) in enumerate(chart_values.items()):
         slice_angle = value / total * 360
-        slice_color = colors[index % len(colors)]
+        slice_color = platform_colors.get(label, "#bbaa99")
         percentage = value / total * 100
 
         arc_id = canvas.create_arc(chart_left, chart_top, chart_right, chart_bottom, start=start_angle, extent=-slice_angle, fill=slice_color, outline="white", width=1)
@@ -3581,7 +3595,7 @@ def update_collection_pie_chart(chart_name, values, title=None):
 def update_collection_stats():
     stats = get_collection_stats()
     update_collection_pie_chart("platform_titles", stats["platform_titles"], title="Titles by Platform")
-    update_collection_pie_chart("platform_payed", stats["platform_payed"], title="Payed by Platform")
+    update_collection_pie_chart("platform_paid", stats["platform_paid"], title="Paid by Platform")
     update_collection_pie_chart("platform_value", stats["platform_value"], title="Value by Platform")
 
     if "titles" in collection_stats_labels:
@@ -3590,8 +3604,8 @@ def update_collection_stats():
     if "platforms" in collection_stats_labels:
         collection_stats_labels["platforms"].configure(text=f"Platforms: {stats['platforms']:,}")
 
-    if "payed" in collection_stats_labels:
-        collection_stats_labels["payed"].configure(text=f"Total Payed: {stats['payed']:,.2f}")
+    if "paid" in collection_stats_labels:
+        collection_stats_labels["paid"].configure(text=f"Total Paid: {stats['paid']:,.2f}")
 
     if "value" in collection_stats_labels:
         collection_stats_labels["value"].configure(text=f"Total Value: {stats['value']:,.2f}")
@@ -3637,17 +3651,28 @@ def update_info_frame():
     active_physical_data_offset = 0
 
     def _on_submit_data(event=None, k=None, v=None):
+        global active_game_is_new
+
         if v is None or k is None:
             return
+        
         new_value = v.get().strip()
         update_info_choice(k, new_value)
+
+        if k.lower() == "title" and new_value and not active_source_game_data:
+            active_game_is_new = True
+            get_pricecharting_price(new_value)
+
         update_info_frame()
+
         if k.lower() == "title" and acceptbutton is not None and declinebutton is not None:
             state = "normal" if v.get().strip() else "disabled"
             acceptbutton.config(state=state)
             declinebutton.config(state=state)
+
         if event is not None and event.keysym == "Return":
             return "break"
+        
     # Update the info frame with the current game data
     for i in range(max_rows):
         key, value = active_game_items[i] if i < len(active_game_items) else ("", "")
@@ -3801,7 +3826,7 @@ def update_info_frame():
             value_label.grid(row=row, column=5, sticky="nsew")
             if display_value.endswith("..."):
                 Tooltip(value_label, text=str(value))
-        elif key.casefold() == "payed" and value:
+        elif key.casefold() == "paid" and value:
             value_frame = ttk.Frame(infoframe)
             value_frame.grid(row=row, column=5, sticky="nsew")
             value_frame.columnconfigure(0, weight=1)
@@ -4359,7 +4384,7 @@ def main():
     stats_definitions = (
         ("titles", "Titles: 0"),
         ("platforms", "Platforms: 0"),
-        ("payed", "Total Payed: 0.00"),
+        ("paid", "Total Paid: 0.00"),
         ("value", "Total Value: 0.00"),
     )
     col_stats_column = 0
