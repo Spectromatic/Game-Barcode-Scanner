@@ -77,6 +77,17 @@ active_pricecharting_soup = None
 active_pricecharting_requested_url = None
 active_pricecharting_url = None
 
+browser_source_data = None
+browser_source_index = -1
+browser_frame = None
+browser_status = None
+browser_price_button = None
+browser_browse_button = None
+browser_ignore_button = None
+browser_next_button = None
+browser_previous_button = None
+browser_add_button = None
+
 def add_id(key):
     print(f"Debug: Adding Moby ID")
     global active_game_data
@@ -179,6 +190,209 @@ def append_new_source_record():
 
     source_data = pd.concat([source_data, pd.DataFrame([new_row])], ignore_index=True)
     source_data.to_excel(source_file, engine="openpyxl", index=False)
+
+def browser_add_current_game():
+    if not active_game_data or not active_game_data.get("title"):
+        handle_error("No browsed game available.")
+        return
+    
+    if active_game_in_collection:
+        response = messagebox.askyesnocancel("Add to Collection", "This game already exists in your collection. Do you want to add a duplicate to your collection?")
+        if response is None:
+            return
+        if not response:
+            return
+
+    game_accept()
+
+    if browser_source_data is not None and browser_source_index >= 0:
+        browser_load_row()
+
+def browser_load_workbook():
+    global browser_source_data, browser_source_index, browser_status
+
+    # Exit browse mode.
+    if browser_source_data is not None:
+        browser_source_data = None
+        browser_source_index = -1
+        game_clear()
+        set_browser_controls_enabled(False)
+
+        if browser_status is not None:
+            browser_status.configure(text="")
+        if browser_browse_button is not None:
+            browser_browse_button.configure(text=f"Browse {get_platform_name()} games")
+        return
+
+    platform = get_platform_name()
+    source_file = Path(BASE_DIR) / "Data" / f"{platform}.xlsx"
+
+    if not source_file.exists():
+        handle_error(f"No source database found for {platform}.")
+        return
+
+    browser_source_data = (pd.read_excel(source_file, engine="openpyxl", dtype=str).fillna(""))
+    browser_source_data.columns = handle_normalized_list(browser_source_data.columns)
+
+    if browser_browse_button is not None:
+        browser_browse_button.configure(text="Exit Browse Mode")
+
+    if browser_source_data.empty:
+        browser_source_index = -1
+        game_clear()
+        set_browser_controls_enabled(False)
+
+        if browser_status is not None:
+            browser_status.configure(text="")
+        return
+
+    browser_source_index = 0
+    browser_load_row()
+
+def browser_load_game(match):
+    global active_game_data
+    global active_taxonomy, active_contexts
+    global active_source_taxonomy, active_source_game_data
+    global active_game_is_new, active_game_in_collection
+
+    normalized_match = handle_normalized_dict(match)
+
+    active_game_is_new = False
+    active_game_data = {
+        "title": match.get("title", ""),
+        "developer": match.get("developer", ""),
+        "release_date": match.get("release_date", ""),
+        "publisher": match.get("publisher", ""),
+        "moby_score": match.get("moby_score", ""),
+        "age_rating": match.get("age_rating", ""),
+        "upc": match.get("upc", ""),
+        "url": match.get("url", ""),
+        "price_url": match.get("price_url", ""),
+        "gameplay_url": "",
+    }
+
+    active_taxonomy = {}
+    active_source_taxonomy = {}
+
+    for key in get_taxonomy_keys():
+        value = match.get(key, "")
+        active_taxonomy[key] = value
+        active_source_taxonomy[key] = value
+
+    active_source_game_data = get_filtered_game_data(match)
+    get_os_specs(match)
+
+    active_contexts = {}
+    for context in get_all_contexts():
+        singular = context[:-1] if context.endswith("s") else context
+        active_contexts[context] = match.get(singular, get_context_data(context))
+
+    active_game_in_collection = is_title_in_collection(active_game_data["title"], get_platform_key())
+
+    update_info_frame()
+
+def browser_load_row():
+    global browser_status
+    if browser_source_data is None or browser_source_index < 0:
+        set_browser_controls_enabled(False)
+        return
+
+    if browser_source_index >= len(browser_source_data):
+        set_browser_controls_enabled(False)
+        return
+
+    match = browser_source_data.iloc[browser_source_index]
+    browser_load_game(match)
+    set_browser_controls_enabled(True)
+
+    if browser_status:
+        browser_status.configure(text=f"{browser_source_index + 1} / {len(browser_source_data)}")
+
+def set_browser_controls_enabled(enabled):
+    state = "normal" if enabled else "disabled"
+
+    for button in (
+        browser_previous_button,
+        browser_next_button,
+        browser_add_button,
+        browser_ignore_button,
+        browser_price_button,
+    ):
+        if button is not None:
+            button.configure(state=state)
+
+def browse_source(direction):
+    global browser_source_index
+
+    if browser_source_data is None:
+        browser_load_workbook()
+        return
+
+    if is_source_game_data_changed() or is_source_taxonomy_changed() or is_source_os_changed():
+        response = messagebox.askyesnocancel("Save source changes?", f"Save changes to '{active_game_data.get('title', '')}'?")
+
+        if response is None:
+            return
+
+        if response and not update_source_record():
+            return
+
+        if response:
+            browser_source_data.iloc[browser_source_index] = (get_source_record())
+
+    browser_source_index = (browser_source_index + direction) % len(browser_source_data)
+    browser_load_row()
+
+def browse_ignore_title():
+    global browser_source_data, browser_source_index, browser_status
+
+    if browser_source_data is None or browser_source_data.empty:
+        return
+
+    visible_index = browser_source_index
+    source_index = browser_source_data.index[visible_index]
+    source_row = browser_source_data.iloc[visible_index].copy()
+    title = str(source_row.get("title", ""))
+
+    if not messagebox.askyesno("Ignore source title", f"Ignore '{title}' from the {get_platform_name()} source browser?"):
+        return
+
+    platform = get_platform_name()
+    source_file = Path(BASE_DIR) / "Data" / f"{platform}.xlsx"
+    ignore_file = Path(BASE_DIR) / "Data" / "Diff" / f"{platform}_ignore.json"
+    ignore_file.parent.mkdir(parents=True, exist_ok=True)
+
+    # Load the existing ignore list so we can add to it
+    records = []
+    if ignore_file.exists():
+        with ignore_file.open("r", encoding="utf-8") as source:
+            loaded_records = json.load(source)
+            if isinstance(loaded_records, list):
+                records = loaded_records
+
+    records.append(source_row.to_dict())
+
+    # Update the title of the game in the source db file with ignore_ prefix
+    source_data = pd.read_excel(source_file, engine="openpyxl", dtype=str).fillna("")
+    source_data.columns = handle_normalized_list(source_data.columns)
+    source_data.at[source_index, "title"] = f"ignore_{title}"
+
+    with ignore_file.open("w", encoding="utf-8") as destination:
+        json.dump(records, destination, indent=4, ensure_ascii=True)
+
+    source_data.to_excel(source_file, engine="openpyxl", index=False)
+
+    browser_source_data = browser_source_data.drop(index=source_index)
+    if browser_source_data.empty:
+        browser_source_index = -1
+        game_clear()
+        set_browser_controls_enabled(False)
+        if browser_status:
+            browser_status.configure(text="0/0")
+        return
+
+    browser_source_index = min(visible_index, len(browser_source_data) - 1)
+    browser_load_row()
 
 def create_barcode(value):
     for candidate in str(value).split(","):
@@ -793,8 +1007,6 @@ def game_accept():
     # If there's changes to the taxonomy 
     elif is_source_taxonomy_changed() or is_source_game_data_changed() or is_source_os_changed():
         response = messagebox.askyesnocancel("Update title", f"Do you wish to update the info for '{selected_title}' in the source database?")
-        if response:
-            create_source_diff()
         if response and not update_source_record():
             handle_error(f"Unable to update '{selected_title}' in the source database.")
             return
@@ -1656,6 +1868,19 @@ def handle_decline_key(root, event):
     if declinebutton is not None and declinebutton.instate(['!disabled']):
         declinebutton.invoke()
 
+def handle_browser_navigation(root, event, direction):
+    focused_widget = root.focus_get()
+
+    # Preserve normal cursor-key behavior while editing text or selections.
+    if isinstance(focused_widget, (tk.Entry, ttk.Entry, tk.Text)):
+        return None
+
+    if browser_source_data is None:
+        return None
+
+    browse_source(direction)
+    return "break"
+
 def handle_ellipsis(text, max_length=30):
     return text if len(text) <= max_length else text[:max_length-3] + "..."
 
@@ -1925,8 +2150,11 @@ def is_title_in_collection(title, platform=None):
     if not platform:
         return False
 
-    result = pd.read_excel(collection_path, sheet_name=platform, engine="openpyxl", dtype=str)
-    collection_data = result[platform] if isinstance(result, dict) else result
+    workbook = pd.ExcelFile(collection_path, engine="openpyxl")
+    if platform not in workbook.sheet_names:
+        return False
+
+    collection_data = pd.read_excel(collection_path, sheet_name=platform, engine="openpyxl", dtype=str)
     collection_data = collection_data.fillna("")
     title_column = next((column for column in collection_data.columns if str(column).casefold() == "title"), None)
 
@@ -2554,6 +2782,9 @@ def populate_context_choices(frame, name):
 
     # Sync button visuals without calling selections_update
     current = var.get()
+    if current < 0 or current >= len(buttons):
+        current = 0
+        var.set(current)
     for i, btn in enumerate(buttons):
         btn.state(['pressed'] if i == current else ['!pressed'])
 
@@ -2921,6 +3152,38 @@ def recall_log_item(event=None):
     pyperclip.copy(clipboard_data)
 
     messagebox.showinfo("Recalled", f"Copied latest matching row for '{title}' to clipboard")
+
+def refresh_current_pricecharting():
+    global browser_price_button, browser_status, browser_source_index, browser_source_data, app_root, active_game_data, browser_status
+    if not active_game_data:
+        return
+
+    title = active_game_data.get("title", "").strip()
+    if not title:
+        return
+
+    if not browser_price_button or not browser_status:
+        return
+    browser_price_button.configure(state="disabled")
+    browser_status.configure(text="Fetching PriceCharting data...")
+
+    def fetch():
+        get_pricecharting_price(title)
+
+        if app_root is not None:
+            app_root.after(0, finish)
+
+    def finish():
+        global browser_status
+        if not browser_price_button or not browser_status:
+            return
+        if browser_source_data is None:
+            return
+        browser_price_button.configure(state="normal")
+        browser_status.configure(text=f"{browser_source_index + 1} / {len(browser_source_data)}")
+        update_info_frame()
+
+    threading.Thread(target=fetch, daemon=True).start()
 
 def rotated_text_image(text, font_size=12, font_path=None):
     font = ImageFont.truetype(font_path, font_size) if font_path else ImageFont.load_default()
@@ -3330,8 +3593,24 @@ def search_game(query):
     app_root.after(100, finish)
 
 def selections_update(name, value):
+    global browser_browse_button, browser_source_index, browser_status, browser_source_data
     # Update the defaults based on the platform selection
     if name == "platforms":
+
+        # Reset the browser
+        browser_source_data = None
+        browser_source_index = -1
+        if browser_status is not None:
+            browser_status.config(text="")
+        if browser_browse_button is not None:
+            browser_browse_button.config(text=f"Browse {get_platform_name()} games")
+        # Disable the browser controls
+        set_browser_controls_enabled(False)
+
+        # Clear the current game, since it's for a different platform
+        game_clear()
+
+        # Set the defaults for the new platform
         settings_set_defaults(value)
 
         release_selection = active_selections.get("release_range")
@@ -3340,6 +3619,7 @@ def selections_update(name, value):
         if release_selection is not None:
             if not release_options:
                 release_selection.set(0)
+            # Wrap around
             elif release_selection.get() >= len(release_options):
                 release_selection.set(0)
 
@@ -3356,7 +3636,13 @@ def selections_update(name, value):
         options = get_context_options(options_key)
         if not options:
             continue
-        active_contexts[setting] = options[active_selections.get(options_key, tk.IntVar()).get()]
+        selection = active_selections.get(options_key)
+        index = selection.get() if isinstance(selection, tk.IntVar) else 0
+
+        if index < 0 or index >= len(options):
+            index = 0
+
+        active_contexts[setting] = options[index]
 
     # Refetch the price if the condition or content has changed in a way that affects the price
     if name in ("conditions", "contents"):
@@ -3992,15 +4278,17 @@ def update_source_record():
             source_key = key[:-1] if key.endswith("s") else key
             record[source_key] = active_contexts.get(key, "")
 
-        normalized_record = handle_normalized_dict(record)
-        changed = any(str(existing_row.get(column, "")) != str(value) for column, value in normalized_record.items())
-        normalized_record["modified"] = (get_timestamp() if changed else existing_modified)
-
-        for column, value in normalized_record.items():
+        record_values = {handle_normalized_text(str(key).replace(" ", "_")): value for key, value in record.items()}
+        existing_values = existing_row.iloc[0]
+        changed = any(handle_normalized_text(existing_values.get(column, "")) != handle_normalized_text(value) for column, value in record_values.items())
+        record_values["modified"] = get_timestamp() if changed else existing_modified
+    
+        for column, value in record_values.items():
             if column in source_data.columns:
                 source_data.loc[matching_row, column] = value
 
         source_data.to_excel(source_file, engine="openpyxl", index=False)
+        create_source_diff()
 
         active_source_taxonomy.update(active_taxonomy)
         print(f"Debug: Updated source data for title '{title}' ({platform})")
@@ -4126,6 +4414,7 @@ def main():
     global infoframe, searchentry, logframe, logtree, acceptbutton, declinebutton, contextlist
     global app_root, thumbnail_label, thumbnail_image, thumbnail_tooltip, thumbnail_refresh_btn, contextframe
     global col_stats_chart, col_stats_graph_frame, collection_stats_labels
+    global browser_status, browser_price_button, browser_browse_button, browser_ignore_button, browser_next_button, browser_previous_button, browser_add_button
     if active_settings is None:
         handle_error("No settings available.")
         return
@@ -4202,6 +4491,43 @@ def main():
     rebuild_context_choices()
     update_info_frame()
 
+    # Controls for browsing the source DB
+    browser_control_frame = ttk.Frame(mainframe)
+    browser_control_frame.grid(row=mainrow, column=0, sticky="ew")
+    browser_control_frame.columnconfigure(3, weight=1)
+    frames_padded.append(browser_control_frame)
+    mainrow += 1
+    browser_col = 0
+
+    browser_previous_button = ttk.Button(browser_control_frame, text="Previous", command=lambda: browse_source(-1), state="disabled")
+    browser_previous_button.grid(row=0, column=browser_col)
+    browser_col += 1
+
+    browser_browse_button = ttk.Button(browser_control_frame, text=f"Browse {get_platform_name() or 'selected platform'} games", command=browser_load_workbook)
+    browser_browse_button.grid(row=0, column=browser_col)
+    browser_col += 1
+
+    browser_ignore_button = ttk.Button(browser_control_frame, text="Ignore", command=browse_ignore_title, state="disabled")
+    browser_ignore_button.grid(row=0, column=browser_col)
+    browser_col += 1
+
+    browser_status = ttk.Label(browser_control_frame, text="")
+    browser_status.grid(row=0, column=browser_col)
+    browser_col += 1
+
+    browser_add_button = ttk.Button(browser_control_frame, text="Add to Collection", command=browser_add_current_game, state="disabled")
+    browser_add_button.grid(row=0, column=browser_col)
+    browser_col += 1
+
+    browser_price_button = ttk.Button(browser_control_frame, text="Refresh Price / Thumbnail", command=refresh_current_pricecharting, state="disabled")
+    browser_price_button.grid(row=0, column=browser_col)
+    browser_col += 1
+
+    browser_next_button = ttk.Button(browser_control_frame, text="Next", command=lambda: browse_source(1), state="disabled")
+    browser_next_button.grid(row=0, column=browser_col)
+    browser_col += 1
+
+    # Log window for the last few titles added
     logframe = ttk.LabelFrame(mainframe, text="Log", padding="2")
     logframe.grid(row=mainrow, column=0, sticky="nsew")
     frames_padded.append(logframe)
@@ -4502,6 +4828,8 @@ def main():
     root.bind_all('<Insert>', handle_missing_upc_shortcut)
     root.bind_all('<Page_Up>', handle_missing_id_shortcut)
     root.bind_all('<Page_Down>', handle_missing_price_url_shortcut)
+    root.bind_all("<Left>", lambda event: handle_browser_navigation(root, event, -1))
+    root.bind_all("<Right>", lambda event: handle_browser_navigation(root, event, 1))
     root.bind('<Tab>', lambda event: handle_tab_key(root, event, 1))
     root.bind('<Shift-Tab>', lambda event: handle_tab_key(root, event, -1))
     root.bind('<ISO_Left_Tab>', lambda event: handle_tab_key(root, event, -1))

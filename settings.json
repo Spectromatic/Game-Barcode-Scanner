@@ -222,6 +222,7 @@
         "setting": [
             "Arctic",
             "Base",
+            "Castle",
             "Cemetary",
             "Court Room",
             "Desert",
@@ -344,6 +345,7 @@
             "Sneaking",
             "Snowboarding",
             "Strategy",
+            "Vehicular Combat",
             "Walking"
         ],
         "type": [
